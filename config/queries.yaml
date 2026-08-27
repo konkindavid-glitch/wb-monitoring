@@ -1,0 +1,189 @@
+# Группы поисковых запросов и расписание опроса
+# Обоснование частот — docs/02-cadence.md
+# Все 89 запросов перенесены из ТЗ §6 без потерь:
+#   Wildberries 28 (wb_core 12 + wb_extended 16), Ozon 19,
+#   Яндекс Маркет 15, AI 15, регулирование 12
+
+version: 1
+updated: "2026-08-27"
+
+# ---------------------------------------------------------------------------
+#  КЛАССЫ ЧАСТОТЫ
+# ---------------------------------------------------------------------------
+cadence_classes:
+  - key: A
+    period_seconds: 300
+    title: "5 минут"
+    rationale: "Здесь скорость конвертируется в деньги селлера"
+  - key: B
+    period_seconds: 900
+    title: "15 минут"
+    rationale: "Официальные каналы Ozon и Яндекс Маркета, отраслевые СМИ"
+  - key: C
+    period_seconds: 1800
+    title: "30 минут"
+    rationale: "Оферты и тарифы правят редко; ценность даёт сравнение снапшотов, а не частота"
+  - key: D
+    period_seconds: 3600
+    title: "1 час"
+    rationale: "API, AI, регуляторика — суточный ритм источника"
+  - key: E
+    period_seconds: 14400
+    title: "4 часа"
+    rationale: "Картотека дел и площадки P4 жёстко ограничивают частоту опроса"
+  - key: F
+    period_seconds: 86400
+    title: "сутки"
+    rationale: "Тренд, изменившийся за час, — не тренд"
+
+# Временное ускорение по событию (docs/02 §2.2)
+escalation:
+  mass_detector_fired:
+    condition: ">=5 независимых сообщений об одной проблеме за 60 минут"
+    class_a_period_seconds: 60
+    class_b_c_period_seconds: 300
+    reset_after_quiet_seconds: 7200
+  doc_diff_detected:
+    condition: "обнаружен diff оферты или тарифов"
+    action: "смежные документы той же площадки опрашиваются немедленно, вне расписания"
+    reset_after: "один полный круг"
+
+# ---------------------------------------------------------------------------
+#  ГРУППЫ ЗАПРОСОВ
+# ---------------------------------------------------------------------------
+query_groups:
+
+  - key: wb_core
+    title: "Wildberries — ядро"
+    cadence_class: A
+    queries:
+      - {text: "Wildberries оферта",              topic: rules_offer,        platform: WILDBERRIES}
+      - {text: "Wildberries комиссии",            topic: seller_money,       platform: WILDBERRIES}
+      - {text: "Wildberries тарифы",              topic: seller_money,       platform: WILDBERRIES}
+      - {text: "Wildberries штрафы",              topic: seller_money,       platform: WILDBERRIES}
+      - {text: "Wildberries платная приёмка",     topic: seller_money,       platform: WILDBERRIES}
+      - {text: "Wildberries хранение",            topic: seller_money,       platform: WILDBERRIES}
+      - {text: "Wildberries выплаты продавцам",   topic: seller_money,       platform: WILDBERRIES}
+      - {text: "Wildberries блокировка кабинета", topic: incidents_scandals, platform: WILDBERRIES}
+      - {text: "Wildberries продавцы жалуются",   topic: incidents_scandals, platform: WILDBERRIES}
+      - {text: "WB оферта",                       topic: rules_offer,        platform: WILDBERRIES}
+      - {text: "WB комиссии",                     topic: seller_money,       platform: WILDBERRIES}
+      - {text: "WB штрафы",                       topic: seller_money,       platform: WILDBERRIES}
+
+  - key: wb_extended
+    title: "Wildberries — расширенный"
+    cadence_class: C
+    queries:
+      - {text: "Wildberries логистика",         topic: logistics_warehouse, platform: WILDBERRIES}
+      - {text: "Wildberries склад",             topic: logistics_warehouse, platform: WILDBERRIES}
+      - {text: "Wildberries возвраты",          topic: logistics_warehouse, platform: WILDBERRIES}
+      - {text: "Wildberries селлеры",           topic: seller_cases,        platform: WILDBERRIES}
+      - {text: "Wildberries реклама",           topic: advertising,         platform: WILDBERRIES}
+      - {text: "Wildberries алгоритм выдачи",   topic: algorithms_tech,     platform: WILDBERRIES}
+      - {text: "Wildberries ранжирование",      topic: algorithms_tech,     platform: WILDBERRIES}
+      - {text: "Wildberries карточки товаров",  topic: rules_offer,         platform: WILDBERRIES}
+      - {text: "Wildberries суд",               topic: disputes,            platform: WILDBERRIES}
+      - {text: "Wildberries ФАС",               topic: disputes,            platform: WILDBERRIES}
+      - {text: "Wildberries ФНС",               topic: disputes,            platform: WILDBERRIES}
+      - {text: "Wildberries Роспотребнадзор",   topic: disputes,            platform: WILDBERRIES}
+      - {text: "Wildberries AI",                topic: ai_marketplace,      platform: WILDBERRIES}
+      - {text: "WB селлеры",                    topic: seller_cases,        platform: WILDBERRIES}
+      - {text: "WB реклама",                    topic: advertising,         platform: WILDBERRIES}
+      - {text: "WB логистика",                  topic: logistics_warehouse, platform: WILDBERRIES}
+
+  - key: ozon
+    title: "Ozon"
+    cadence_class: B
+    queries:
+      - {text: "Ozon оферта",              topic: rules_offer,        platform: OZON}
+      - {text: "Ozon комиссии",            topic: seller_money,       platform: OZON}
+      - {text: "Ozon тарифы",              topic: seller_money,       platform: OZON}
+      - {text: "Ozon штрафы",              topic: seller_money,       platform: OZON}
+      - {text: "Ozon логистика",           topic: logistics_warehouse, platform: OZON}
+      - {text: "Ozon FBO",                 topic: logistics_warehouse, platform: OZON}
+      - {text: "Ozon FBS",                 topic: logistics_warehouse, platform: OZON}
+      - {text: "Ozon realFBS",             topic: logistics_warehouse, platform: OZON}
+      - {text: "Ozon хранение",            topic: seller_money,       platform: OZON}
+      - {text: "Ozon возвраты",            topic: logistics_warehouse, platform: OZON}
+      - {text: "Ozon выплаты продавцам",   topic: seller_money,       platform: OZON}
+      - {text: "Ozon реклама",             topic: advertising,        platform: OZON}
+      - {text: "Ozon алгоритм выдачи",     topic: algorithms_tech,    platform: OZON}
+      - {text: "Ozon селлеры",             topic: seller_cases,       platform: OZON}
+      - {text: "Ozon блокировка кабинета", topic: incidents_scandals, platform: OZON}
+      - {text: "Ozon суд",                 topic: disputes,           platform: OZON}
+      - {text: "Ozon ФАС",                 topic: disputes,           platform: OZON}
+      - {text: "Ozon AI",                  topic: ai_marketplace,     platform: OZON}
+      - {text: "Ozon инструменты продавцов", topic: algorithms_tech,  platform: OZON}
+
+  - key: yandex_market
+    title: "Яндекс Маркет"
+    cadence_class: B
+    queries:
+      - {text: "Яндекс Маркет оферта",     topic: rules_offer,         platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет комиссии",   topic: seller_money,        platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет тарифы",     topic: seller_money,        platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет штрафы",     topic: seller_money,        platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет логистика",  topic: logistics_warehouse, platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет FBY",        topic: logistics_warehouse, platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет FBS",        topic: logistics_warehouse, platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет DBS",        topic: logistics_warehouse, platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет реклама",    topic: advertising,         platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет продавцы",   topic: seller_cases,        platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет селлеры",    topic: seller_cases,        platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет алгоритмы",  topic: algorithms_tech,     platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет суд",        topic: disputes,            platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет ФАС",        topic: disputes,            platform: YANDEX_MARKET}
+      - {text: "Яндекс Маркет AI",         topic: ai_marketplace,      platform: YANDEX_MARKET}
+
+  - key: ai_ecommerce
+    title: "AI + маркетплейсы и e-commerce"
+    cadence_class: D
+    queries:
+      - {text: "AI для маркетплейсов",            topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "ИИ для маркетплейсов",            topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "нейросети для селлеров",          topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "AI для Wildberries",              topic: ai_marketplace, platform: WILDBERRIES}
+      - {text: "AI для Ozon",                     topic: ai_marketplace, platform: OZON}
+      - {text: "AI карточки товаров",             topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "AI генерация описаний товаров",   topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "AI аналитика маркетплейсов",      topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "AI реклама маркетплейсы",         topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "AI pricing e-commerce",           topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "AI marketplace tools",            topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "generative AI ecommerce",         topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "AI product listings",             topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "AI seller tools",                 topic: ai_marketplace, platform: CROSS_PLATFORM}
+      - {text: "AI retail media",                 topic: ai_marketplace, platform: CROSS_PLATFORM}
+
+  - key: regulation
+    title: "Регулирование"
+    cadence_class: D
+    queries:
+      - {text: "закон о маркетплейсах",                  topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "регулирование маркетплейсов",            topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "ФАС маркетплейсы",                       topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "ФНС маркетплейсы",                       topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "Роспотребнадзор маркетплейсы",           topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "Минпромторг маркетплейсы",               topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "Госдума маркетплейсы",                   topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "налоги селлеры маркетплейсы",            topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "маркировка маркетплейсы",                topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "Честный знак маркетплейсы",              topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "защита прав потребителей маркетплейсы",  topic: regulation, platform: CROSS_PLATFORM}
+      - {text: "платформенная экономика закон",          topic: regulation, platform: CROSS_PLATFORM}
+
+# ---------------------------------------------------------------------------
+#  КОНТРОЛЬНЫЕ ЧИСЛА (сверяются tools/validate.py с ТЗ §6)
+# ---------------------------------------------------------------------------
+expected_counts:
+  wb_core: 12
+  wb_extended: 16
+  ozon: 19
+  yandex_market: 15
+  ai_ecommerce: 15
+  regulation: 12
+  total: 89
+  # ТЗ задаёт Wildberries одной группой из 28 запросов;
+  # здесь она разделена на wb_core (класс A) и wb_extended (класс C):
+  # 12 + 16 = 28. Состав запросов не изменён.
+  wildberries_total: 28

@@ -1,0 +1,18 @@
+# Секреты — никогда в репозиторий
+.env
+*.env
+!.env.example
+
+# Отчёты проверялок — генерируются
+tools/validation-report.txt
+tools/sql-check-report.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Снапшоты страниц для doc_diff — живут на /data в Амвере
+data/
+snapshots/

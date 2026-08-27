@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/monitoring-map/hit.schema.json",
+  "title": "Находка карты мониторинга",
+  "description": "Контракт передачи находки downstream. Обоснование полей — docs/03-handoff.md §2.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "hit_id",
+    "discovered_at",
+    "url",
+    "title",
+    "platforms",
+    "topics",
+    "categories",
+    "source_ref",
+    "score",
+    "factors",
+    "triage_decision",
+    "state"
+  ],
+  "properties": {
+    "hit_id": {
+      "type": "string",
+      "pattern": "^hit_[A-Za-z0-9]{8,32}$",
+      "description": "Уникальный идентификатор находки"
+    },
+    "discovered_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Когда модуль обнаружил материал. Свежесть считается от этого момента"
+    },
+    "published_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Когда материал был опубликован источником. null, если дату извлечь не удалось"
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "excerpt": {
+      "type": "string",
+      "description": "Фрагмент, на основании которого проставлены факторы"
+    },
+    "platforms": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "WILDBERRIES", "OZON", "YANDEX_MARKET", "MEGAMARKET", "AVITO",
+          "LAMODA", "ALIEXPRESS_RU", "KUPER", "DETSKIY_MIR", "LEMANA_PRO",
+          "HOFF", "VSEINSTRUMENTI", "CITILINK", "MVIDEO", "DNS", "NICHE",
+          "CROSS_PLATFORM", "OTHER"
+        ]
+      }
+    },
+    "topics": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "seller_money", "rules_offer", "advertising", "logistics_warehouse",
+          "algorithms_tech", "ai_marketplace", "regulation", "disputes",
+          "seller_cases", "incidents_scandals", "market_trends"
+        ]
+      }
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "COMMISSION_TARIFF", "PENALTY_DEDUCTION", "OFFER_RULES", "LOGISTICS",
+          "RANKING_ALGO", "ADVERTISING", "PAYMENTS_SETTLEMENT", "TAXES",
+          "REGULATION_LAW", "ANTITRUST_FAS", "COURT_PRACTICE", "PLATFORM_TOOLS",
+          "AI_TECH", "MARKET_TREND", "SELLER_CASE", "INCIDENT_OUTAGE",
+          "BUYER_IMPACT", "BRAND_IP"
+        ]
+      }
+    },
+    "signal": {
+      "description": "Сигнал, которым находка обнаружена. Отсутствует, если найдена обычным запросом",
+      "enum": [
+        "doc_change", "mass_complaints", "penalty_discussions", "ad_rate_jump",
+        "cabinet_new_tools", "feature_appear_vanish", "category_limits",
+        "major_seller_case", "analytical_reports", "court_documents",
+        "regulator_statements", "new_ai_services", "market_research",
+        "financial_reports", "buyer_behavior_shift", "demand_anomaly",
+        "platform_tech_updates", "notable_conflicts"
+      ]
+    },
+    "source_ref": {
+      "type": "object",
+      "description": "Без ссылки на источник находка непроверяема, а значит бесполезна downstream",
+      "additionalProperties": false,
+      "required": ["source_key"],
+      "properties": {
+        "source_key": { "type": "string", "minLength": 1 },
+        "tier": { "enum": ["T1", "T2", "T3", "T4", "T5", "T6"] },
+        "snapshot_id": { "type": "string" },
+        "query_text": {
+          "type": "string",
+          "description": "Запрос, которым найдено, если найдено запросом"
+        }
+      }
+    },
+    "score": {
+      "type": "integer",
+      "minimum": -180,
+      "maximum": 160,
+      "description": "Сумма весов сработавших факторов. Границы — config/triage.yaml → score_bounds"
+    },
+    "factors": {
+      "type": "object",
+      "description": "Разбор по всем 14 факторам. Хранится целиком, чтобы находку можно было пересчитать при перекалибровке весов без повторного прохода",
+      "additionalProperties": false,
+      "required": [
+        "platform_wb", "seller_money_impact", "rules_change",
+        "authoritative_source", "is_fresh", "has_practical_takeaway",
+        "mass_effect", "ai_link", "legal_tax_risk", "has_conflict",
+        "is_repeat", "is_old", "no_confirmation", "is_advertising"
+      ],
+      "properties": {
+        "platform_wb":            { "$ref": "#/$defs/factor" },
+        "seller_money_impact":    { "$ref": "#/$defs/factor" },
+        "rules_change":           { "$ref": "#/$defs/factor" },
+        "authoritative_source":   { "$ref": "#/$defs/factor" },
+        "is_fresh":               { "$ref": "#/$defs/factor" },
+        "has_practical_takeaway": { "$ref": "#/$defs/factor" },
+        "mass_effect":            { "$ref": "#/$defs/factor" },
+        "ai_link":                { "$ref": "#/$defs/factor" },
+        "legal_tax_risk":         { "$ref": "#/$defs/factor" },
+        "has_conflict":           { "$ref": "#/$defs/factor" },
+        "is_repeat":              { "$ref": "#/$defs/factor" },
+        "is_old":                 { "$ref": "#/$defs/factor" },
+        "no_confirmation":        { "$ref": "#/$defs/factor" },
+        "is_advertising":         { "$ref": "#/$defs/factor" }
+      }
+    },
+    "triage_decision": {
+      "enum": ["URGENT", "QUEUE", "BACKLOG", "DROP"],
+      "description": "Полоса очереди. URGENT не означает «опубликовать» — см. docs/03-handoff.md §3.1"
+    },
+    "drop_reason": {
+      "type": "string",
+      "description": "Код причины при triage_decision = DROP: код стоп-правила, SCORE_BELOW_40 или EXPIRED_IN_BACKLOG"
+    },
+    "effective_date": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "Дата вступления в силу, если извлечена. Работает тай-брейком очереди"
+    },
+    "state": {
+      "enum": ["NEW", "SCORED", "TRIAGED", "HANDED_OFF", "DROPPED"]
+    }
+  },
+  "$defs": {
+    "factor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hit", "weight"],
+      "properties": {
+        "hit": { "type": "boolean" },
+        "weight": { "type": "integer" },
+        "why": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Обоснование. Обязательно при hit = true — фактор без обоснования не засчитывается"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "hit": { "const": true } }, "required": ["hit"] },
+          "then": { "required": ["why"] }
+        },
+        {
+          "if": { "properties": { "hit": { "const": false } }, "required": ["hit"] },
+          "then": { "properties": { "weight": { "const": 0 } } }
+        }
+      ]
+    }
+  }
+}

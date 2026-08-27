@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/monitoring-map/heartbeat.schema.json",
+  "title": "Отчёт heartbeat: ответы на десять вопросов",
+  "description": "Формируется каждым тиком раз в 5 минут. Обоснование — docs/02-cadence.md §3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["report_id", "tick_at", "answers", "urgent_count", "queue_count"],
+  "properties": {
+    "report_id": {
+      "type": "string",
+      "pattern": "^hb_[A-Za-z0-9]{8,32}$"
+    },
+    "tick_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "answers": {
+      "type": "array",
+      "description": "Ровно десять ответов, по одному на каждый вопрос ТЗ §10",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/answer" }
+    },
+    "urgent_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Сколько находок в полосе URGENT на момент тика"
+    },
+    "queue_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "model_calls": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Обращений к модели за тик. У пустого тика — 0"
+    },
+    "degraded": {
+      "type": "array",
+      "description": "Классы или источники, работающие в деградации на момент тика",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "answer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question_no", "question", "answer", "data_age_seconds", "hit_ids"],
+      "properties": {
+        "question_no": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "answer": {
+          "enum": ["yes", "no", "unknown"],
+          "description": "unknown — источник недоступен; это не то же самое, что no"
+        },
+        "data_age_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Возраст данных, на которых построен ответ. Обязателен: ответ «нет» без возраста неотличим от «не проверяли»"
+        },
+        "hit_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^hit_[A-Za-z0-9]{8,32}$" },
+          "description": "Находки, обосновывающие ответ. Пустой массив при answer = no"
+        },
+        "note": {
+          "type": "string",
+          "description": "Пояснение: что именно найдено или когда следующий опрос"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "answer": { "const": "yes" } }, "required": ["answer"] },
+          "then": { "properties": { "hit_ids": { "minItems": 1 } } }
+        }
+      ]
+    }
+  }
+}

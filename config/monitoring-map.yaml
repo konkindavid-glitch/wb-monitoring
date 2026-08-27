@@ -1,0 +1,318 @@
+# Карта мониторинга: площадки, темы, сигналы
+# Обоснование и правила — docs/00-monitoring-map.md
+# Категории — фиксированный набор monitoring_category, см. sql/001_monitoring_map.sql
+
+version: 1
+updated: "2026-08-27"
+
+# ---------------------------------------------------------------------------
+#  ПЛОЩАДКИ
+#  priority_value — тай-брейк очереди, НЕ баллы матрицы (docs/00 §2.2)
+# ---------------------------------------------------------------------------
+platforms:
+  - key: WILDBERRIES
+    title: "Wildberries"
+    priority: P1
+    priority_value: 25
+  - key: OZON
+    title: "Ozon"
+    priority: P2
+    priority_value: 15
+  - key: YANDEX_MARKET
+    title: "Яндекс Маркет"
+    priority: P3
+    priority_value: 10
+
+  # P4 — входят в работу только при значимом событии, см. docs/00 §2.3
+  - key: MEGAMARKET
+    title: "Мегамаркет"
+    priority: P4
+    priority_value: 5
+  - key: AVITO
+    title: "Авито"
+    priority: P4
+    priority_value: 5
+  - key: LAMODA
+    title: "Lamoda"
+    priority: P4
+    priority_value: 5
+  - key: ALIEXPRESS_RU
+    title: "AliExpress Россия"
+    priority: P4
+    priority_value: 5
+  - key: KUPER
+    title: "СберМаркет / Купер"
+    priority: P4
+    priority_value: 5
+  - key: DETSKIY_MIR
+    title: "Детский мир"
+    priority: P4
+    priority_value: 5
+  - key: LEMANA_PRO
+    title: "Лемана ПРО"
+    priority: P4
+    priority_value: 5
+  - key: HOFF
+    title: "Hoff"
+    priority: P4
+    priority_value: 5
+  - key: VSEINSTRUMENTI
+    title: "ВсеИнструменты"
+    priority: P4
+    priority_value: 5
+  - key: CITILINK
+    title: "Ситилинк"
+    priority: P4
+    priority_value: 5
+  - key: MVIDEO
+    title: "М.Видео"
+    priority: P4
+    priority_value: 5
+  - key: DNS
+    title: "DNS"
+    priority: P4
+    priority_value: 5
+  - key: NICHE
+    title: "Нишевые маркетплейсы"
+    priority: P4
+    priority_value: 5
+
+  - key: CROSS_PLATFORM
+    title: "Рынок целиком"
+    priority: P4
+    priority_value: 5
+  - key: OTHER
+    title: "Прочее"
+    priority: P4
+    priority_value: 5
+
+# Условия входа для площадок приоритета P4 (docs/00 §2.3)
+p4_entry_conditions:
+  - "значимая инновация, применимая к селлерам других площадок"
+  - "скандал, расследование, утечка"
+  - "регуляторная или судебная история"
+  - "кейс с практическим выводом"
+  - "рыночное движение: уход, приход, слияние, смена модели"
+
+# ---------------------------------------------------------------------------
+#  ТЕМЫ
+# ---------------------------------------------------------------------------
+topics:
+
+  - key: seller_money
+    title: "Деньги селлеров"
+    subtopics:
+      - {key: commissions,          title: "Комиссии",                                      category: COMMISSION_TARIFF}
+      - {key: logistics_cost,       title: "Логистика",                                     category: LOGISTICS}
+      - {key: storage_cost,         title: "Хранение",                                      category: LOGISTICS}
+      - {key: returns_cost,         title: "Возвраты",                                      category: LOGISTICS}
+      - {key: penalties,            title: "Штрафы",                                        category: PENALTY_DEDUCTION}
+      - {key: paid_acceptance,      title: "Платная приёмка",                               category: LOGISTICS}
+      - {key: paid_promotion,       title: "Платное продвижение",                           category: ADVERTISING}
+      - {key: deductions,           title: "Удержания",                                     category: PENALTY_DEDUCTION}
+      - {key: payout_freeze,        title: "Заморозка выплат",                              category: PAYMENTS_SETTLEMENT}
+      - {key: payout_terms,         title: "Изменение сроков выплат",                       category: PAYMENTS_SETTLEMENT}
+      - {key: mandatory_services,   title: "Новые обязательные услуги",                     category: COMMISSION_TARIFF}
+      - {key: tax_burden,           title: "Изменение налоговой нагрузки",                  category: TAXES}
+      - {key: marking_certification, title: "Маркировка и сертификация",                    category: REGULATION_LAW}
+      - {key: ad_cost_growth,       title: "Рост стоимости рекламы",                        category: ADVERTISING}
+      - {key: unit_economics,       title: "Изменение юнит-экономики",                      category: COMMISSION_TARIFF}
+      - {key: discount_promo_rules, title: "Изменение правил расчёта скидок и акций",       category: OFFER_RULES}
+
+  - key: rules_offer
+    title: "Правила и оферты"
+    subtopics:
+      - {key: offer_revision,        title: "Новые редакции оферт",                          category: OFFER_RULES}
+      - {key: seller_docs,           title: "Изменения в документах для продавцов",          category: OFFER_RULES}
+      - {key: supply_rules,          title: "Правила поставок",                              category: LOGISTICS}
+      - {key: return_rules,          title: "Правила возвратов",                             category: LOGISTICS}
+      - {key: product_block_rules,   title: "Правила блокировки товаров",                    category: OFFER_RULES}
+      - {key: card_moderation_rules, title: "Правила модерации карточек",                    category: OFFER_RULES}
+      - {key: content_requirements,  title: "Требования к фото, описаниям, характеристикам", category: OFFER_RULES}
+      - {key: review_rating_rules,   title: "Правила отзывов и рейтингов",                   category: OFFER_RULES}
+      - {key: brand_doc_rules,       title: "Правила работы с брендами и документами",       category: BRAND_IP}
+
+  - key: advertising
+    title: "Реклама и продвижение"
+    subtopics:
+      - {key: ad_rates,               title: "Изменения рекламных ставок",                        category: ADVERTISING}
+      - {key: ad_formats,             title: "Новые рекламные форматы",                           category: ADVERTISING}
+      - {key: ad_auction,             title: "Изменения аукциона",                                category: ADVERTISING}
+      - {key: search_ads,             title: "Изменения в поисковой рекламе",                     category: ADVERTISING}
+      - {key: auto_campaigns,         title: "Изменения в автоматических кампаниях",              category: ADVERTISING}
+      - {key: ad_cabinets,            title: "Рекламные кабинеты WB, Ozon, Яндекс Маркета",       category: ADVERTISING}
+      - {key: ad_analytics_tools,     title: "Новые инструменты аналитики рекламы",               category: PLATFORM_TOOLS}
+      - {key: cac_growth,             title: "Рост стоимости привлечения клиента",                category: ADVERTISING}
+      - {key: drr_cases,              title: "Кейсы по снижению ДРР",                             category: SELLER_CASE}
+      - {key: card_seo,               title: "Изменения в SEO карточек",                          category: RANKING_ALGO}
+      - {key: reviews_ranking_effect, title: "Влияние отзывов, рейтинга и контента на выдачу",    category: RANKING_ALGO}
+
+  - key: logistics_warehouse
+    title: "Логистика и склады"
+    subtopics:
+      - {key: warehouse_open_close,     title: "Открытие и закрытие складов",                  category: LOGISTICS}
+      - {key: warehouse_overload,       title: "Перегрузки складов",                           category: LOGISTICS}
+      - {key: acceptance_coefficients,  title: "Изменения коэффициентов приёмки",              category: LOGISTICS}
+      - {key: storage_tariffs,          title: "Изменения тарифов хранения",                   category: COMMISSION_TARIFF}
+      - {key: supply_delays,            title: "Задержки поставок",                            category: LOGISTICS}
+      - {key: return_problems,          title: "Проблемы с возвратами",                        category: LOGISTICS}
+      - {key: packaging_rules,          title: "Изменения правил упаковки",                    category: LOGISTICS}
+      - {key: marking_rules,            title: "Изменения правил маркировки",                  category: REGULATION_LAW}
+      - {key: delivery_schemes,         title: "Новые схемы доставки",                         category: LOGISTICS}
+      - {key: sorting_center_failures,  title: "Сбои на сортировочных центрах",                category: INCIDENT_OUTAGE}
+      - {key: logistics_complaints,     title: "Массовые жалобы селлеров на логистику",        category: INCIDENT_OUTAGE}
+
+  - key: algorithms_tech
+    title: "Алгоритмы и технологии маркетплейсов"
+    subtopics:
+      - {key: ranking_changes,        title: "Изменения в ранжировании",                     category: RANKING_ALGO}
+      - {key: search_results_changes, title: "Изменения в поисковой выдаче",                 category: RANKING_ALGO}
+      - {key: promotion_factors,      title: "Новые факторы продвижения",                    category: RANKING_ALGO}
+      - {key: search_personalization, title: "Персонализация выдачи",                        category: RANKING_ALGO}
+      - {key: ai_recommendations,     title: "AI-рекомендации",                              category: AI_TECH}
+      - {key: antifraud,              title: "Антифрод",                                     category: PLATFORM_TOOLS}
+      - {key: auto_card_moderation,   title: "Автоматическая модерация карточек",            category: PLATFORM_TOOLS}
+      - {key: auto_pricing,           title: "Автоматическое ценообразование",               category: PLATFORM_TOOLS}
+      - {key: quality_control_algo,   title: "Алгоритмы контроля качества",                  category: PLATFORM_TOOLS}
+      - {key: demand_forecast_tools,  title: "Инструменты прогнозирования спроса",           category: PLATFORM_TOOLS}
+      - {key: stock_recommendations,  title: "Рекомендации по остаткам",                     category: PLATFORM_TOOLS}
+      - {key: new_api_integrations,   title: "Новые API и интеграции",                       category: PLATFORM_TOOLS}
+
+  - key: ai_marketplace
+    title: "AI + маркетплейсы"
+    # Повышенный порог входа: нужен применимый вывод или измеренный результат (docs/00 §3.6)
+    entry_threshold: elevated
+    subtopics:
+      - {key: ai_card_generation,            title: "AI-генерация карточек товаров",                            category: AI_TECH}
+      - {key: ai_description_generation,     title: "AI-генерация описаний, характеристик, инфографики",        category: AI_TECH}
+      - {key: ai_review_analysis,            title: "AI-анализ отзывов",                                        category: AI_TECH}
+      - {key: ai_seller_assistants,          title: "AI-помощники для селлеров",                                category: AI_TECH}
+      - {key: ai_support_bots,               title: "AI-чат-боты поддержки",                                    category: AI_TECH}
+      - {key: ai_ad_management,              title: "AI-инструменты для управления рекламой",                   category: AI_TECH}
+      - {key: ai_demand_forecast,            title: "AI-прогнозирование спроса",                                category: AI_TECH}
+      - {key: ai_dynamic_pricing,            title: "AI-динамическое ценообразование",                          category: AI_TECH}
+      - {key: ai_competitor_analytics,       title: "AI-аналитика конкурентов",                                 category: AI_TECH}
+      - {key: ai_product_search,             title: "AI-поиск товаров",                                         category: AI_TECH}
+      - {key: ai_storefront_personalization, title: "AI-персонализация витрины",                                category: AI_TECH}
+      - {key: ai_antifraud,                  title: "AI-антифрод",                                              category: AI_TECH}
+      - {key: ai_procurement,                title: "AI-инструменты для закупок",                               category: AI_TECH}
+      - {key: ai_content_managers,           title: "AI-инструменты для контент-менеджеров",                    category: AI_TECH}
+      - {key: ai_agency_tools,               title: "AI-инструменты для агентств, ведущих селлеров",            category: AI_TECH}
+      - {key: ai_startups,                   title: "Новые стартапы на стыке AI и маркетплейсов",               category: AI_TECH}
+      - {key: ai_result_cases,               title: "Кейсы, где AI дал рост продаж или автоматизацию рутины",   category: SELLER_CASE}
+
+  - key: regulation
+    title: "Законодательство и регулирование"
+    subtopics:
+      - {key: marketplace_law,              title: "Законы о маркетплейсах",                                       category: REGULATION_LAW}
+      - {key: platform_economy_regulation,  title: "Регулирование платформенной экономики",                        category: REGULATION_LAW}
+      - {key: gov_initiatives,              title: "Инициативы Госдумы, Минпромторга, ФАС, ФНС, Роспотребнадзора", category: REGULATION_LAW}
+      - {key: seller_taxes,                 title: "Изменения по налогам для селлеров",                            category: TAXES}
+      - {key: chestny_znak,                 title: "Маркировка «Честный знак»",                                    category: REGULATION_LAW}
+      - {key: product_certification,        title: "Сертификация товаров",                                         category: REGULATION_LAW}
+      - {key: ad_requirements,              title: "Требования к рекламе",                                         category: ADVERTISING}
+      - {key: personal_data,                title: "Персональные данные",                                          category: REGULATION_LAW}
+      - {key: consumer_protection,          title: "Защита прав потребителей",                                     category: REGULATION_LAW}
+      - {key: category_restrictions,        title: "Ограничения по категориям товаров",                            category: REGULATION_LAW}
+      - {key: precedent_rulings,            title: "Судебные решения, которые могут стать прецедентом",            category: COURT_PRACTICE}
+      - {key: regulator_fines,              title: "Штрафы маркетплейсов от регуляторов",                          category: ANTITRUST_FAS}
+      - {key: antitrust_cases,              title: "Антимонопольные дела",                                         category: ANTITRUST_FAS}
+
+  - key: disputes
+    title: "Судебные споры и конфликты"
+    subtopics:
+      - {key: seller_vs_marketplace,   title: "Иски селлеров к маркетплейсам",                  category: COURT_PRACTICE}
+      - {key: marketplace_vs_seller,   title: "Иски маркетплейсов к селлерам",                  category: COURT_PRACTICE}
+      - {key: collective_complaints,   title: "Коллективные жалобы",                            category: COURT_PRACTICE}
+      - {key: deduction_disputes,      title: "Споры по удержаниям и штрафам",                  category: COURT_PRACTICE}
+      - {key: account_block_disputes,  title: "Споры по блокировкам кабинетов",                 category: COURT_PRACTICE}
+      - {key: counterfeit_tm_disputes, title: "Споры по подделкам и товарным знакам",           category: BRAND_IP}
+      - {key: return_disputes,         title: "Споры по возвратам",                             category: COURT_PRACTICE}
+      - {key: fas_cases,               title: "Дела ФАС",                                       category: ANTITRUST_FAS}
+      - {key: fns_cases,               title: "Дела ФНС",                                       category: TAXES}
+      - {key: rospotrebnadzor_cases,   title: "Дела Роспотребнадзора",                          category: REGULATION_LAW}
+      - {key: pvz_conflicts,           title: "Громкие конфликты с ПВЗ",                        category: LOGISTICS}
+      - {key: partner_conflicts,       title: "Конфликты вокруг условий работы партнёров",      category: LOGISTICS}
+
+  - key: seller_cases
+    title: "Кейсы селлеров"
+    # Кейсы из Telegram, чатов и соцсетей — сигнал, а не подтверждённый факт (docs/00 §3.9)
+    treat_social_as_signal_only: true
+    subtopics:
+      - {key: growth_case,            title: "Как селлер вырос на WB или Ozon",                              category: SELLER_CASE}
+      - {key: money_loss_case,        title: "Как селлер потерял деньги из-за правил площадки",              category: SELLER_CASE}
+      - {key: problem_solved_case,    title: "Как продавец решил проблему с логистикой, штрафами, рекламой", category: SELLER_CASE}
+      - {key: beginner_mistakes,      title: "Ошибки новичков",                                              category: SELLER_CASE}
+      - {key: top_entry_case,         title: "Кейсы по выходу в топ",                                        category: SELLER_CASE}
+      - {key: drr_reduction_case,     title: "Кейсы по снижению ДРР",                                        category: SELLER_CASE}
+      - {key: reviews_work_case,      title: "Кейсы по работе с отзывами",                                   category: SELLER_CASE}
+      - {key: unit_economics_case,    title: "Кейсы по юнит-экономике",                                      category: SELLER_CASE}
+      - {key: ai_automation_case,     title: "Кейсы по AI-автоматизации",                                    category: SELLER_CASE}
+      - {key: niche_seasonality_case, title: "Кейсы по нишам, категориям и сезонности",                      category: SELLER_CASE}
+
+  - key: incidents_scandals
+    title: "Проблемы и скандалы"
+    subtopics:
+      - {key: mass_seller_complaints, title: "Массовые жалобы селлеров",                       category: INCIDENT_OUTAGE}
+      - {key: cabinet_outages,        title: "Сбои в кабинетах",                               category: INCIDENT_OUTAGE}
+      - {key: payout_delays,          title: "Задержки выплат",                                category: PAYMENTS_SETTLEMENT}
+      - {key: mass_blocks,            title: "Массовые блокировки",                            category: OFFER_RULES}
+      - {key: return_issues,          title: "Проблемы с возвратами",                          category: LOGISTICS}
+      - {key: penalty_spike,          title: "Резкий рост штрафов",                            category: PENALTY_DEDUCTION}
+      - {key: pvz_scandals,           title: "Скандалы с ПВЗ",                                 category: LOGISTICS}
+      - {key: data_leaks,             title: "Утечки данных",                                  category: REGULATION_LAW}
+      - {key: counterfeit_problems,   title: "Проблемы с подделками",                          category: BRAND_IP}
+      - {key: brand_conflicts,        title: "Конфликты с брендами",                           category: BRAND_IP}
+      - {key: media_investigations,   title: "Расследования СМИ",                              category: MARKET_TREND}
+      - {key: regulator_claims,       title: "Претензии регуляторов",                          category: REGULATION_LAW}
+      - {key: public_statements,      title: "Публичные заявления крупных участников рынка",   category: MARKET_TREND}
+
+  - key: market_trends
+    title: "Тренды рынка"
+    subtopics:
+      - {key: ecommerce_market_size, title: "Рост или падение рынка e-commerce",                      category: MARKET_TREND}
+      - {key: platform_shares,       title: "Изменение долей площадок",                                category: MARKET_TREND}
+      - {key: category_growth,       title: "Рост категорий",                                          category: MARKET_TREND}
+      - {key: seasonal_trends,       title: "Сезонные тренды",                                         category: MARKET_TREND}
+      - {key: buyer_behavior,        title: "Поведение покупателей",                                   category: BUYER_IMPACT}
+      - {key: average_check,         title: "Изменение среднего чека",                                 category: MARKET_TREND}
+      - {key: ad_spend_growth,       title: "Рост рекламных расходов",                                 category: ADVERTISING}
+      - {key: market_consolidation,  title: "Консолидация рынка",                                      category: MARKET_TREND}
+      - {key: new_players,           title: "Выход новых игроков",                                     category: MARKET_TREND}
+      - {key: players_exit,          title: "Уход игроков",                                            category: MARKET_TREND}
+      - {key: retail_to_marketplace, title: "Трансформация розницы в marketplace-модель",              category: MARKET_TREND}
+      - {key: cross_border,          title: "Развитие cross-border e-commerce",                        category: MARKET_TREND}
+      - {key: macro_factors,         title: "Влияние курса валют, импорта, логистики и санкций",       category: MARKET_TREND}
+
+# ---------------------------------------------------------------------------
+#  СИГНАЛЫ — то, что не новость, но означает, что что-то произошло
+#  Сигнал — всегда кандидат на проверку, не готовое событие (docs/00 §4)
+# ---------------------------------------------------------------------------
+signals:
+  - {key: doc_change,            title: "Важные изменения в документах маркетплейсов", method: doc_diff}
+  - {key: mass_complaints,       title: "Массовые жалобы селлеров",                    method: mass_detector}
+  - {key: penalty_discussions,   title: "Обсуждения новых штрафов или удержаний",      method: mass_detector}
+  - {key: ad_rate_jump,          title: "Резкие изменения рекламных ставок",           method: metric_jump}
+  - {key: cabinet_new_tools,     title: "Новые инструменты в личных кабинетах",        method: cabinet_snapshot_diff}
+  - {key: feature_appear_vanish, title: "Исчезновение или появление функций",          method: cabinet_snapshot_diff}
+  - {key: category_limits,       title: "Новые ограничения в категориях товаров",      method: doc_diff}
+  - {key: major_seller_case,     title: "Крупные кейсы селлеров",                      method: editorial_pick}
+  - {key: analytical_reports,    title: "Аналитические отчёты",                        method: registry_watch}
+  - {key: court_documents,       title: "Судебные документы",                          method: registry_watch}
+  - {key: regulator_statements,  title: "Заявления регуляторов",                       method: registry_watch}
+  - {key: new_ai_services,       title: "Новые AI-сервисы",                            method: registry_watch}
+  - {key: market_research,       title: "Исследования рынка",                          method: registry_watch}
+  - {key: financial_reports,     title: "Финансовые отчёты маркетплейсов",             method: registry_watch}
+  - {key: buyer_behavior_shift,  title: "Изменения в поведении покупателей",           method: metric_jump}
+  - {key: demand_anomaly,        title: "Сезонные аномалии спроса",                    method: metric_jump}
+  - {key: platform_tech_updates, title: "Технологические обновления платформ",         method: api_changelog_diff}
+  - {key: notable_conflicts,     title: "Заметные конфликты и скандалы",               method: mass_detector}
+
+signal_methods:
+  - {key: doc_diff,              title: "Сравнение снапшотов документа"}
+  - {key: mass_detector,         title: "Всплеск независимых упоминаний в окне"}
+  - {key: metric_jump,           title: "Отклонение метрики от скользящего среднего"}
+  - {key: cabinet_snapshot_diff, title: "Сравнение снапшотов интерфейса и справки"}
+  - {key: registry_watch,        title: "Новая запись в отслеживаемом реестре"}
+  - {key: api_changelog_diff,    title: "Сравнение changelog и спецификации API"}
+  - {key: editorial_pick,        title: "Отбор редактора с последующим подтверждением"}
