@@ -1,0 +1,9 @@
+psycopg[binary]==3.2.3
+httpx==0.28.1
+feedparser==6.0.12
+beautifulsoup4==4.15.0
+lxml==6.1.1
+PyYAML==6.0.3
+anthropic==0.40.0
+jsonschema==4.26.0
+pytest==8.3.4
