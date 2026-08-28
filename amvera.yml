@@ -1,0 +1,8 @@
+meta:
+  environment: python
+  toolchain:
+    name: pip
+    version: 3.12
+run:
+  scriptName: app.py
+  persistenceMount: /data

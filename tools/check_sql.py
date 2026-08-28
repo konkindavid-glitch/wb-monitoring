@@ -104,13 +104,31 @@ check("migration is wrapped in a transaction",
       code_only.startswith("BEGIN;") and code_only.endswith("COMMIT;"),
       "starts %r, ends %r" % (code_only[:8], code_only[-8:]))
 
+# --- idempotency -----------------------------------------------------------
+# The service restarts and re-applies the migration. Bare CREATE TYPE / CREATE
+# TABLE would abort the second start, so every one of them must be guarded.
+guarded_types = sql_text.count("EXCEPTION WHEN duplicate_object")
+guarded_tables = sql_text.count("CREATE TABLE IF NOT EXISTS")
+bare_tables = len(re.findall(r"CREATE\s+TABLE\s+(?!IF NOT EXISTS)", sql_text, re.I))
+bare_indexes = len(re.findall(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+ON\s", sql_text, re.I))
+
+check("all 6 enum types are guarded against re-creation", guarded_types == 6,
+      "%d guarded" % guarded_types)
+check("all 9 tables use IF NOT EXISTS", guarded_tables == 9,
+      "%d guarded, %d bare" % (guarded_tables, bare_tables))
+check("no unnamed indexes (IF NOT EXISTS needs explicit names)",
+      bare_indexes == 0, "%d bare" % bare_indexes)
+check("migration is safe to apply twice",
+      guarded_types == 6 and bare_tables == 0 and bare_indexes == 0)
+
 # --- indexes ---------------------------------------------------------------
 index_count = len(re.findall(r"CREATE\s+(?:UNIQUE\s+)?INDEX", sql_text, re.I))
 check("indexes declared on the hot query paths", index_count >= 15,
       "%d indexes" % index_count)
 check("url_hash is unique on monitoring_hits",
-      re.search(r"CREATE\s+UNIQUE\s+INDEX\s+ON\s+monitoring_hits\s*\(url_hash\)",
-                sql_text, re.I) is not None)
+      re.search(r"CREATE\s+UNIQUE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+\w*\s*"
+                r"ON\s+monitoring_hits\s*\(url_hash\)",
+                sql_text, re.I | re.S) is not None)
 
 lines.append("")
 lines.append("NOTE   Postgres is not installed on this machine and Docker is not")

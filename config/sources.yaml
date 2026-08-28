@@ -1,0 +1,118 @@
+# Реестр источников v1
+#
+# Адреса — стартовые кандидаты, а не проверенная истина: ленты меняются, часть
+# площадок закрывает RSS без предупреждения. Поэтому каждый источник проходит
+# онбординг при первом запуске, и не прошедший получает status: needs_review
+# и попадает в дайджест. Молча деградировать источник не может.
+#
+# Классы частоты — docs/02-cadence.md §2.
+
+version: 1
+updated: "2026-08-27"
+
+sources:
+
+  # --- T1: официальные страницы площадок, сравнение снапшотов ---------------
+  # Самый ценный сигнал карты: правку оферты или тарифа не сопровождает
+  # ни одна публикация.
+
+  - key: src_wb_seller_news
+    title: "Wildberries — новости для продавцов"
+    tier: T1
+    method: doc_diff
+    platform: WILDBERRIES
+    cadence: A
+    url: "https://seller.wildberries.ru/news"
+    signal: doc_change
+    status: needs_review
+
+  - key: src_wb_tariffs
+    title: "Wildberries — тарифы и комиссии"
+    tier: T1
+    method: doc_diff
+    platform: WILDBERRIES
+    cadence: C
+    url: "https://seller.wildberries.ru/tariffs"
+    signal: doc_change
+    status: needs_review
+
+  - key: src_ozon_seller_news
+    title: "Ozon — новости для продавцов"
+    tier: T1
+    method: doc_diff
+    platform: OZON
+    cadence: B
+    url: "https://seller.ozon.ru/news"
+    signal: doc_change
+    # Отдаёт 403 боту. Проверить после деплоя: возможно, дело в IP машины.
+    status: needs_review
+
+  - key: src_ym_partner_news
+    title: "Яндекс Маркет — новости для партнёров"
+    tier: T1
+    method: doc_diff
+    platform: YANDEX_MARKET
+    cadence: B
+    url: "https://yandex.ru/support/marketplace/news.html"
+    signal: doc_change
+    status: needs_review
+
+  # --- T3: отраслевые СМИ, RSS ---------------------------------------------
+  # Дают ежедневный объём, на котором можно откалибровать пороги 80/60/40.
+  # Оферта правится несколько раз в месяц — на ней одной матрицу не проверить.
+
+  - key: src_retail_ru
+    title: "Retail.ru"
+    tier: T3
+    method: rss
+    platform: CROSS_PLATFORM
+    cadence: B
+    url: "https://www.retail.ru/rss/news/"
+    # С машины Давида рвётся TLS — та же блокировка, что у Амверы и Звукограма.
+    # С серверов Амверы должен открыться, проверить после деплоя.
+    status: needs_review
+
+  - key: src_new_retail
+    title: "New Retail"
+    tier: T3
+    method: rss
+    platform: CROSS_PLATFORM
+    cadence: B
+    url: "https://new-retail.ru/rss/"
+    status: active
+
+  - key: src_oborot
+    title: "Oborot.ru"
+    tier: T3
+    method: rss
+    platform: CROSS_PLATFORM
+    cadence: B
+    url: "https://oborot.ru/feed/"
+    status: active
+
+  - key: src_vc_ecommerce
+    title: "VC.ru"
+    tier: T3
+    method: rss
+    platform: CROSS_PLATFORM
+    cadence: B
+    url: "https://vc.ru/rss/all"
+    status: needs_review
+
+  - key: src_habr_ecommerce
+    title: "Habr — электронная коммерция"
+    tier: T3
+    method: rss
+    platform: CROSS_PLATFORM
+    cadence: B
+    url: "https://habr.com/ru/rss/hubs/ecommerce/articles/?fl=ru"
+    status: active
+
+# Пороги онбординга.
+# Источник без корректных дат ломает свежесть и не допускается: без даты
+# элемент не может получить фактор is_fresh, и вся временная ось едет.
+onboarding:
+  min_successful_requests: 3
+  min_items_parsed: 3
+  min_dated_share: 0.8
+  min_relevant_share: 0.02

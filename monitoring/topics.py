@@ -53,6 +53,26 @@ def _topic_categories(cfg, topic_key: str, haystack: set) -> list:
     return found
 
 
+def detect_platform(item, matchers: list, cfg):
+    """Площадка по содержанию материала, а не по источнику.
+
+    Статья про Wildberries на отраслевом сайте приходит из источника с
+    площадкой CROSS_PLATFORM. Если брать площадку из источника, такой материал
+    теряет +25 — самый весомый фактор матрицы, — и вся приоритизация по главной
+    площадке канала перестаёт работать ровно там, где она нужнее всего.
+
+    Возвращает площадку с наибольшим приоритетом среди совпавших или None.
+    """
+    haystack = set(_words(f"{item.title} {item.body}"))
+
+    found = {m.platform for m in matchers
+             if m.words and set(m.words) <= haystack
+             and m.platform != "CROSS_PLATFORM"}
+    if not found:
+        return None
+    return max(found, key=cfg.platform_priority)
+
+
 def classify(item, matchers: list, cfg) -> tuple:
     """Возвращает (темы, категории). Пустые кортежи, если ничего не совпало."""
     haystack = set(_words(f"{item.title} {item.body}"))

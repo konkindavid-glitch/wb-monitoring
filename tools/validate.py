@@ -251,6 +251,40 @@ missing_in_doc = [k for k in topic_keys if ("`%s`" % k) not in doc00]
 check("every topic key documented in docs/00", not missing_in_doc,
       "missing: %s" % missing_in_doc)
 
+# --- source registry -------------------------------------------------------
+try:
+    sources_cfg = load_yaml("config", "sources.yaml")
+    srcs = sources_cfg["sources"]
+    check("config/sources.yaml parses", True, "%d sources" % len(srcs))
+
+    source_keys = [s["key"] for s in srcs]
+    check("source keys unique", len(source_keys) == len(set(source_keys)))
+
+    bad_plat = sorted(set(s["platform"] for s in srcs) - yaml_platforms)
+    check("every source references a declared platform", not bad_plat,
+          "unknown: %s" % bad_plat)
+
+    bad_method = sorted(set(s["method"] for s in srcs) - {"rss", "doc_diff"})
+    check("every source uses a supported method", not bad_method,
+          "unknown: %s" % bad_method)
+
+    bad_tier = sorted(set(s["tier"] for s in srcs)
+                      - {"T1", "T2", "T3", "T4", "T5", "T6"})
+    check("every source has a valid tier", not bad_tier, "unknown: %s" % bad_tier)
+
+    doc_diff_without_signal = [s["key"] for s in srcs
+                               if s["method"] == "doc_diff" and not s.get("signal")]
+    check("every doc_diff source declares its signal", not doc_diff_without_signal,
+          "missing: %s" % doc_diff_without_signal)
+
+    bad_signal = sorted(set(s.get("signal") for s in srcs if s.get("signal"))
+                        - set(signal_keys))
+    check("every source signal is declared in the map", not bad_signal,
+          "unknown: %s" % bad_signal)
+except Exception as exc:
+    check("config/sources.yaml parses", False, str(exc))
+    srcs = []
+
 # ---------------------------------------------------------------------------
 #  4. Scoring matrix
 # ---------------------------------------------------------------------------
@@ -396,6 +430,13 @@ if unused_classes:
     report_lines.append(
         "INFO   cadence classes not used by any query group (sources only): %s"
         % ", ".join(sorted(unused_classes)))
+
+source_classes = set(s["cadence"] for s in srcs)
+check("every source uses a declared cadence class", source_classes <= set(cadence),
+      "unknown: %s" % sorted(source_classes - set(cadence)))
+check("class A has at least one Wildberries source",
+      any(s["cadence"] == "A" and s["platform"] == "WILDBERRIES" for s in srcs),
+      "class A exists for WB speed; an empty one makes the 5-minute tick pointless")
 
 check("class A is 300 seconds", cadence["A"]["period_seconds"] == 300,
       "actual %s" % cadence["A"]["period_seconds"])

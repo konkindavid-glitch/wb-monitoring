@@ -27,6 +27,16 @@ _MOTIVATIONAL = re.compile(
 _MINOR_PROMO = re.compile(r"запустил\w*\s+(?:небольш\w+\s+)?акци", re.I)
 _BUYER_ONLY = re.compile(r"как выбрать|что подарить|гид покупателя", re.I)
 
+# Признаки конкретики: проценты, деньги, даты, числовые изменения.
+_CONCRETE = re.compile(
+    r"\d+[.,]?\d*\s*%"
+    r"|\d+[.,]?\d*\s*(?:п\.?\s?п\.?|процент)"
+    r"|\d+[.,]?\d*\s*(?:руб|₽)"
+    r"|\bс\s+\d{1,2}\s+(?:янв|фев|мар|апр|мая|июн|июл|авг|сен|окт|ноя|дек)"
+    r"|\d{2}\.\d{2}\.\d{4}"
+    r"|\bс\s+\d+[.,]\d+\s+до\s+\d+[.,]\d+",
+    re.I)
+
 
 def check(item: SourceItem, cfg=None) -> StopVerdict:
     """Возвращает вердикт. Код всегда из config/triage.yaml → stop_rules."""
@@ -52,7 +62,26 @@ def check(item: SourceItem, cfg=None) -> StopVerdict:
         if age > timedelta(days=MAX_AGE_DAYS):
             return StopVerdict("STOP_OLD_NEWS", f"возраст {age.days} дней")
 
-    if len(item.body) < MIN_BODY_CHARS:
+    if len(item.body) < MIN_BODY_CHARS and not _has_substance(item):
         return StopVerdict("STOP_TOO_GENERAL", f"тело {len(item.body)} символов")
 
     return StopVerdict()
+
+
+def _has_substance(item: SourceItem) -> bool:
+    """Короткий текст ещё не значит пустой.
+
+    Отраслевые ленты часто отдают один заголовок без тела, и «В Ozon уточнили
+    условия постоплаты» приходит как 40 символов. Резать такое по длине —
+    терять именно то, ради чего построен мониторинг: в одном прогоне по живым
+    данным это правило съело больше половины релевантных новостей лучшего
+    источника.
+
+    Поэтому длина отсеивает только материал, за которым нет ничего: ни темы из
+    карты, ни конкретных чисел, ни авторитетного источника.
+    """
+    if item.topics:
+        return True
+    if item.tier in ("T1", "T2"):
+        return True
+    return bool(_CONCRETE.search(f"{item.title} {item.body}"))

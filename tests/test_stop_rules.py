@@ -41,8 +41,32 @@ def test_old_material_is_stopped():
     assert check(item(published=NOW - timedelta(days=45)), CFG).code == "STOP_OLD_NEWS"
 
 
-def test_short_body_is_too_general():
+def test_short_body_without_substance_is_too_general():
     assert check(item(body="Коротко."), CFG).code == "STOP_TOO_GENERAL"
+
+
+def test_short_body_with_numbers_survives():
+    """RSS отдаёт анонсы в полторы строки.
+
+    Объявление о росте комиссии на 4 п.п. укладывается в 150 символов, и резать
+    его по длине — терять ровно то, ради чего построен мониторинг.
+    """
+    short_but_concrete = "Комиссия по категории вырастет на 4 п.п. с 1 сентября."
+    assert not check(item(body=short_but_concrete), CFG).stopped
+
+
+def test_short_body_with_percent_survives():
+    assert not check(item(body="Тариф хранения повышается на 15%."), CFG).stopped
+
+
+def test_short_body_from_official_source_survives():
+    """У T1 за спиной первоисточник — длина анонса ничего не решает."""
+    assert not check(item(body="Обновлена оферта.", tier="T1"), CFG).stopped
+
+
+def test_short_body_from_chat_without_numbers_is_still_stopped():
+    assert check(item(body="Что-то поменялось.", tier="T5"), CFG).code == \
+           "STOP_TOO_GENERAL"
 
 
 def test_useful_material_passes():
