@@ -142,7 +142,7 @@ def run_tick(cadence_class: str, deps: Deps, now: datetime) -> dict:
             print(f"[degraded] классификатор недоступен: {stats.get('error')}")
     elif survivors and deps.judge is None:
         counters["model_failed"] = -1
-        print("[degraded] ANTHROPIC_API_KEY не задан — "
+        print("[degraded] нет ни OPENROUTER_API_KEY, ни ANTHROPIC_API_KEY — "
               "7 факторов из 14 не проставляются, оценки систематически занижены")
 
     weights = deps.cfg.factor_weights()
@@ -229,9 +229,8 @@ def build_deps(cfg, dry_run: bool) -> Deps:
         apply_migration(conn, ROOT / "sql" / "001_monitoring_map.sql")
         deps.repo = Repo(conn)
 
-    if os.getenv("ANTHROPIC_API_KEY"):
-        from monitoring.factors.judgment import AnthropicClient
-        deps.judge = AnthropicClient()
+    from monitoring.factors.judgment import build_client
+    deps.judge = build_client()
 
     return deps
 

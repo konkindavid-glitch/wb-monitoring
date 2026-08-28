@@ -13,6 +13,7 @@ import json
 import os
 
 MODEL = "claude-haiku-4-5-20251001"
+OPENROUTER_MODEL = "anthropic/claude-haiku-4.5"
 MAX_TOKENS = 2048
 BODY_LIMIT = 1200
 
@@ -46,7 +47,7 @@ _INSTRUCTION = """Ты размечаешь материалы для монит
 
 
 class AnthropicClient:
-    """Обёртка над API. Ключ берётся из окружения и в код не попадает."""
+    """Прямой Anthropic API. Ключ берётся из окружения и в код не попадает."""
 
     def __init__(self, model: str = MODEL):
         import anthropic
@@ -60,6 +61,58 @@ class AnthropicClient:
             messages=[{"role": "user", "content": prompt}],
         )
         return message.content[0].text
+
+
+class OpenRouterClient:
+    """OpenRouter: один ключ на все модели, OpenAI-совместимый протокол.
+
+    Выбран основным вариантом не из-за цены: он не упирается в те сетевые
+    блокировки, на которые проект уже дважды напоролся, и оплачивается
+    российской картой. Зависимостей не добавляет — ходит через httpx,
+    который и так стоит ради коллекторов.
+    """
+
+    URL = "https://openrouter.ai/api/v1/chat/completions"
+
+    def __init__(self, model: str = OPENROUTER_MODEL, timeout: float = 60.0):
+        self._key = os.environ["OPENROUTER_API_KEY"]
+        self._model = model
+        self._timeout = timeout
+
+    def complete(self, prompt: str) -> str:
+        import httpx
+
+        response = httpx.post(
+            self.URL,
+            headers={
+                "Authorization": f"Bearer {self._key}",
+                "Content-Type": "application/json",
+                # OpenRouter просит их для учёта трафика приложения
+                "HTTP-Referer": "https://amvera.ru",
+                "X-Title": "Monitoring Map",
+            },
+            json={
+                "model": self._model,
+                "max_tokens": MAX_TOKENS,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=self._timeout,
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
+
+
+def build_client():
+    """Клиент по тому, какой ключ задан. OpenRouter имеет приоритет.
+
+    Возвращает None, если ключа нет вовсе — тик в этом случае обязан громко
+    сообщить о деградации, а не молча занижать оценки.
+    """
+    if os.getenv("OPENROUTER_API_KEY"):
+        return OpenRouterClient(os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL))
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return AnthropicClient()
+    return None
 
 
 def build_prompt(items) -> str:
