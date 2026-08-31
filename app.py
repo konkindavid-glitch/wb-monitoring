@@ -231,6 +231,41 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
 
 # --- запуск ---------------------------------------------------------------
 
+def check_environment(dry_run: bool) -> list:
+    """Чего не хватает для работы. Пустой список — всё на месте."""
+    missing = []
+    if not dry_run and not os.getenv("DATABASE_URL"):
+        missing.append("DATABASE_URL — без базы находки некуда сохранять")
+    if not os.getenv("OPENROUTER_API_KEY") and not os.getenv("ANTHROPIC_API_KEY"):
+        missing.append("OPENROUTER_API_KEY — без него 7 факторов из 14 "
+                       "не проставляются и всё уходит в DROP")
+    if not os.getenv("TELEGRAM_BOT_TOKEN") or not os.getenv("TELEGRAM_CHAT_ID"):
+        missing.append("TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID — "
+                       "находки будут копиться в базе, но не приходить в бота")
+    return missing
+
+
+def wait_for_configuration(missing: list) -> None:
+    """Ждёт настройки вместо падения.
+
+    Аварийное завершение здесь дало бы цикл перезапусков: контейнер падает,
+    Амвера поднимает его снова, лог заполняется одинаковыми трейсбеками, и за
+    это ещё капают деньги. Спокойное ожидание оставляет лог читаемым, а после
+    добавления переменных Амвера перезапустит контейнер сама.
+    """
+    print("=" * 70)
+    print("СЕРВИС НЕ НАСТРОЕН. Не хватает переменных окружения:")
+    for line in missing:
+        print(f"  • {line}")
+    print()
+    print("Задать их: проект wb-monitoring → вкладка «Переменные».")
+    print("После сохранения Амвера перезапустит контейнер сама.")
+    print("=" * 70)
+    while True:
+        time.sleep(300)
+        print("[waiting] переменные окружения всё ещё не заданы")
+
+
 def build_deps(cfg, dry_run: bool) -> Deps:
     from monitoring.collectors.base import Fetcher
     from monitoring.collectors.doc_diff import SnapshotStore
@@ -349,6 +384,15 @@ def main():
     if args.onboard:
         run_onboarding(cfg)
         return
+
+    # Проверка до подключений: без DATABASE_URL сервис падал бы на первой
+    # строке и Амвера крутила бы его в цикле перезапусков.
+    missing = check_environment(args.dry_run)
+    critical = [m for m in missing if m.startswith("DATABASE_URL")]
+    if critical:
+        wait_for_configuration(missing)
+    for line in missing:
+        print(f"[degraded] не задано: {line}")
     cadence = cfg.cadence_seconds()
     deps = build_deps(cfg, args.dry_run)
     if args.dry_run:
