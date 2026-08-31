@@ -239,6 +239,22 @@ DB_DEFAULTS = {
 }
 
 
+def database_parts():
+    """Параметры подключения из отдельных переменных или None.
+
+    Экранирования не требуют вовсе — в этом и смысл второго пути.
+    """
+    password = os.getenv("DB_PASSWORD")
+    if not password:
+        return None
+    parts = dict(DB_DEFAULTS, password=password)
+    for env_name, key in (("DB_HOST", "host"), ("DB_PORT", "port"),
+                          ("DB_USER", "user"), ("DB_NAME", "dbname")):
+        if os.getenv(env_name):
+            parts[key] = os.getenv(env_name)
+    return parts
+
+
 def database_source() -> tuple:
     """Как подключаться к базе: ('url', dsn) либо ('parts', {...}), либо (None, None).
 
@@ -250,13 +266,8 @@ def database_source() -> tuple:
     url = os.getenv("DATABASE_URL")
     if url:
         return "url", url
-    password = os.getenv("DB_PASSWORD")
-    if password:
-        parts = dict(DB_DEFAULTS, password=password)
-        for env_name, key in (("DB_HOST", "host"), ("DB_PORT", "port"),
-                              ("DB_USER", "user"), ("DB_NAME", "dbname")):
-            if os.getenv(env_name):
-                parts[key] = os.getenv(env_name)
+    parts = database_parts()
+    if parts:
         return "parts", parts
     return None, None
 
@@ -318,14 +329,24 @@ def build_deps(cfg, dry_run: bool) -> Deps:
             ctx = connect(source) if kind == "url" else connect(**source)
             conn = ctx.__enter__()
         except Exception as exc:
-            if kind == "url":
+            fallback = database_parts()
+            if kind == "url" and fallback:
+                # DATABASE_URL не разобрался — почти всегда это спецсимвол
+                # в пароле, который в URL обязан быть percent-кодирован.
+                # Раз отдельные параметры заданы, переключаемся на них
+                # вместо падения: экранировать там нечего.
+                print(f"[warn] DATABASE_URL не сработал ({exc}); "
+                      "перехожу на DB_PASSWORD")
+                conn = connect(**fallback).__enter__()
+            elif kind == "url":
                 raise RuntimeError(
                     f"не удалось подключиться по DATABASE_URL: {exc}\n"
                     "Если в пароле есть @ : / ? # или %, в URL их нужно "
                     "percent-кодировать. Проще задать DB_PASSWORD отдельной "
                     "переменной — там экранировать ничего не надо."
                 ) from exc
-            raise
+            else:
+                raise
         apply_migration(conn, ROOT / "sql" / "001_monitoring_map.sql")
         deps.repo = Repo(conn)
 
