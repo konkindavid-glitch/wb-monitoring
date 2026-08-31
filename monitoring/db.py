@@ -4,6 +4,7 @@ import json
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
+from typing import NamedTuple
 from uuid import uuid4
 
 import psycopg
@@ -33,6 +34,15 @@ def apply_migration(conn, sql_path: Path) -> None:
 
 def _uid(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:16]}"
+
+
+class RecentItem(NamedTuple):
+    """Лёгкая проекция находки — ровно то, что нужно для подсчёта подтверждений."""
+
+    url_hash: str
+    source_key: str
+    title: str
+    platform: str
 
 
 class Repo:
@@ -110,6 +120,26 @@ class Repo:
                 (hit_id, result.decision, result.score))
         self.conn.commit()
         return hit_id
+
+    def recent_for_confirmation(self, hours: int = 72) -> list:
+        """Недавние находки для подсчёта подтверждений.
+
+        Подтверждение нельзя искать только внутри одного тика: новость, вышедшая
+        на одном сайте в 10:00, а на другом в 14:00, попадёт в разные тики и
+        никогда не встретится сама с собой. Окно в трое суток покрывает
+        типичное расползание сюжета по изданиям.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """SELECT url_hash, source_key, title, platforms[1]
+                     FROM monitoring_hits
+                    WHERE discovered_at > now() - make_interval(hours => %s)
+                    ORDER BY discovered_at DESC
+                    LIMIT 2000""",
+                (hours,))
+            return [RecentItem(url_hash=r[0], source_key=r[1], title=r[2],
+                               platform=r[3] or "CROSS_PLATFORM")
+                    for r in cur.fetchall()]
 
     # --- доставка ---------------------------------------------------------
 

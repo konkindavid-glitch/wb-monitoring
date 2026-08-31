@@ -72,3 +72,71 @@ def test_question_without_hits_answers_no_with_empty_list():
               if a["question_no"] == 7)
     assert q7["answer"] == "no"
     assert q7["hit_ids"] == []
+
+
+# --- раскладка находок по вопросам ----------------------------------------
+
+from monitoring.heartbeat import map_hits_to_questions  # noqa: E402
+from monitoring.models import ScoreResult, SourceItem  # noqa: E402
+
+
+def hit(hit_id, *, platform="WILDBERRIES", fired=(), categories=(),
+        decision="QUEUE", score=65):
+    item = SourceItem(source_key="s", url=f"https://x/{hit_id}", url_hash=hit_id,
+                      title="Заголовок", body="Тело", discovered_at=NOW,
+                      published_at=NOW, platform=platform, categories=categories)
+    factors = {name: {"hit": name in fired, "weight": 0} for name in (
+        "platform_wb", "seller_money_impact", "rules_change",
+        "authoritative_source", "is_fresh", "has_practical_takeaway",
+        "mass_effect", "ai_link", "legal_tax_risk", "has_conflict",
+        "is_repeat", "is_old", "no_confirmation", "is_advertising")}
+    return (hit_id, item, ScoreResult(score=score, decision=decision,
+                                      factors=factors))
+
+
+def test_wb_hit_answers_question_one():
+    assert map_hits_to_questions([hit("hit_a")]).get(1) == ["hit_a"]
+
+
+def test_money_impact_answers_question_two():
+    mapped = map_hits_to_questions([hit("hit_a", fired={"seller_money_impact"})])
+    assert mapped.get(2) == ["hit_a"]
+
+
+def test_ozon_answers_question_six_not_one():
+    mapped = map_hits_to_questions([hit("hit_a", platform="OZON")])
+    assert mapped.get(6) == ["hit_a"]
+    assert 1 not in mapped
+
+
+def test_incident_category_answers_question_five():
+    mapped = map_hits_to_questions([hit("hit_a", categories=("INCIDENT_OUTAGE",))])
+    assert mapped.get(5) == ["hit_a"]
+
+
+def test_unconfirmed_item_does_not_answer_question_nine():
+    """Вопрос 9 — «свежая и подтверждённая». Без подтверждения ответа нет."""
+    confirmed = map_hits_to_questions([hit("hit_a", fired={"is_fresh"})])
+    unconfirmed = map_hits_to_questions(
+        [hit("hit_b", fired={"is_fresh", "no_confirmation"})])
+    assert confirmed.get(9) == ["hit_a"]
+    assert 9 not in unconfirmed
+
+
+def test_dropped_item_does_not_answer_question_ten():
+    mapped = map_hits_to_questions([hit("hit_a", decision="DROP", score=-10)])
+    assert 10 not in mapped
+
+
+def test_mapping_feeds_the_report_and_turns_answers_to_yes():
+    """Главное: раскладка должна доезжать до отчёта.
+
+    Раньше hits_by_question никто не заполнял, и heartbeat отвечал «нет»
+    на все десять вопросов всегда — функция была декоративной.
+    """
+    mapped = map_hits_to_questions([hit("hit_a", fired={"seller_money_impact"})])
+    report = build_report({"last_run_at": {c: NOW for c in "ABCDEF"},
+                           "hits_by_question": mapped}, NOW)
+    q2 = next(a for a in report["answers"] if a["question_no"] == 2)
+    assert q2["answer"] == "yes"
+    assert q2["hit_ids"] == ["hit_a"]

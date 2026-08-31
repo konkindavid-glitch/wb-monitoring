@@ -23,6 +23,48 @@ QUESTIONS = [
 ]
 
 
+def map_hits_to_questions(hits) -> dict:
+    """Раскладывает находки тика по десяти вопросам ТЗ.
+
+    Без этого heartbeat отвечает «нет» на всё и всегда — даже когда находки
+    есть, — и вся функция становится декоративной.
+
+    hits — последовательность (hit_id, item, result).
+    """
+    by_question = {number: [] for number, _, _ in QUESTIONS}
+
+    def add(number, hit_id):
+        if hit_id not in by_question[number]:
+            by_question[number].append(hit_id)
+
+    for hit_id, item, result in hits:
+        fired = {k for k, v in result.factors.items() if v.get("hit")}
+        categories = set(item.categories)
+
+        if item.platform == "WILDBERRIES":
+            add(1, hit_id)
+        if "seller_money_impact" in fired:
+            add(2, hit_id)
+        if "rules_change" in fired:
+            add(3, hit_id)
+        if "legal_tax_risk" in fired:
+            add(4, hit_id)
+        if "INCIDENT_OUTAGE" in categories or "has_conflict" in fired:
+            add(5, hit_id)
+        if item.platform in ("OZON", "YANDEX_MARKET"):
+            add(6, hit_id)
+        if "ai_link" in fired:
+            add(7, hit_id)
+        if "MARKET_TREND" in categories:
+            add(8, hit_id)
+        if "is_fresh" in fired and "no_confirmation" not in fired:
+            add(9, hit_id)
+        if result.decision in ("URGENT", "QUEUE"):
+            add(10, hit_id)
+
+    return {number: ids for number, ids in by_question.items() if ids}
+
+
 def build_report(state: dict, now: datetime) -> dict:
     """Отчёт по schemas/heartbeat.schema.json."""
     last_run = state.get("last_run_at", {})

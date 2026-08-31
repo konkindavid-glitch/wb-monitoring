@@ -29,10 +29,11 @@ except Exception:
 from monitoring import stop_rules
 from monitoring.collectors import doc_diff, rss
 from monitoring.config import load_config
+from monitoring.confirmation import count_independent_sources, repeats_of
 from monitoring.delivery import format_digest, format_urgent, send
 from monitoring.factors.judgment import judgment_factors
 from monitoring.factors.mechanical import mechanical_factors
-from monitoring.heartbeat import build_report
+from monitoring.heartbeat import build_report, map_hits_to_questions
 from monitoring.scoring import score_item
 from monitoring.topics import build_matchers, classify, detect_platform
 
@@ -40,6 +41,7 @@ ROOT = Path(__file__).resolve().parent
 POLL_SECONDS = 60
 DIGEST_EVERY_HOURS = 12
 BATCH_SIZE = 15
+CONFIRMATION_WINDOW_HOURS = 72
 
 _LOCKS = {}
 _LOCKS_GUARD = threading.Lock()
@@ -148,16 +150,36 @@ def run_tick(cadence_class: str, deps: Deps, now: datetime) -> dict:
     weights = deps.cfg.factor_weights()
     thresholds = deps.cfg.thresholds()
 
+    # Пул для подсчёта подтверждений — текущий тик плюс окно недавних находок
+    # из базы. Только по тику считать нельзя: новость, вышедшая на одном сайте
+    # в 10:00, а на другом в 14:00, попадёт в разные тики и не встретится.
+    pool = list(survivors)
+    if hasattr(deps.repo, "recent_for_confirmation"):
+        try:
+            pool += deps.repo.recent_for_confirmation(CONFIRMATION_WINDOW_HOURS)
+        except Exception as exc:
+            print(f"[warn] окно подтверждений недоступно: {exc}")
+
+    scored_hits = []
     for item in survivors:
-        fired = mechanical_factors(item, deps.cfg, known_urls=set(),
-                                   independent_sources=1)
+        # Одна и та же новость из трёх изданий — три независимых подтверждения,
+        # и штраф −50 снимается. Без этого он срабатывал на всём, что пришло
+        # не из официального источника, и подъём из BACKLOG был мёртв.
+        sources = count_independent_sources(item, pool)
+        known = {item.url_hash} if repeats_of(item, pool) else set()
+
+        fired = mechanical_factors(item, deps.cfg, known_urls=known,
+                                   independent_sources=sources)
         fired.update(judged.get(item.url_hash, {}))
 
         result = score_item(fired, weights, thresholds)
-        deps.repo.save_hit(item, result, run_id)
+        hit_id = deps.repo.save_hit(item, result, run_id)
+        scored_hits.append((hit_id, item, result))
         counters["scored"] += 1
         if result.decision == "URGENT":
             counters["urgent"] += 1
+
+    counters["hits"] = scored_hits
 
     status = "DEGRADED" if counters.get("model_failed") else "SUCCESS"
     deps.repo.finish_run(run_id, status=status, fetched=counters["fetched"],
@@ -259,6 +281,9 @@ class DryRunRepo:
         print(f"          темы: {', '.join(item.topics) or '—'}")
         return "hit_dry"
 
+    def recent_for_confirmation(self, hours=72):
+        return []
+
     def promote_backlog(self, now, weights, thresholds):
         return []
 
@@ -340,6 +365,8 @@ def main():
                 continue
             try:
                 counters = run_tick(cadence_class, deps, now)
+                hits = counters.pop("hits", [])
+                state["hits_by_question"].update(map_hits_to_questions(hits))
                 print(f"[tick] class={cadence_class} {counters}")
             except Exception as exc:
                 print(f"[fail] class={cadence_class}: {exc}")
