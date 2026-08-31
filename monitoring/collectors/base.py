@@ -9,7 +9,10 @@ from dataclasses import dataclass
 
 import httpx
 
-USER_AGENT = ("MonitoringMap/1.0 (+mailto:davidkonkin299@gmail.com) "
+# Контакт для владельцев сайтов — ссылка, а не личная почта: репозиторий
+# публичный, и адрес из User-Agent осел бы во всех логах и у сборщиков спама.
+USER_AGENT = ("MonitoringMap/1.0 "
+              "(+https://github.com/konkindavid-glitch/wb-monitoring) "
               "seller-news monitoring")
 TIMEOUT = 20.0
 RETRIES = 3
