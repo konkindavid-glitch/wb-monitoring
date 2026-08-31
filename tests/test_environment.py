@@ -57,3 +57,44 @@ def test_half_configured_telegram_counts_as_missing(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "x")
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     assert any("TELEGRAM" in m for m in check_environment(dry_run=False))
+
+
+# --- источник подключения к базе ------------------------------------------
+
+from app import database_source  # noqa: E402
+
+
+def test_database_url_wins_when_both_are_set(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h:5432/d")
+    monkeypatch.setenv("DB_PASSWORD", "секрет")
+    kind, source = database_source()
+    assert kind == "url"
+    assert source == "postgresql://u:p@h:5432/d"
+
+
+def test_db_password_alone_is_enough(monkeypatch):
+    """Пароль со спецсимволами не нужно экранировать — в этом весь смысл."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DB_PASSWORD", "па@роль:с/спец#символами%")
+    kind, parts = database_source()
+    assert kind == "parts"
+    assert parts["password"] == "па@роль:с/спец#символами%"
+    assert parts["host"] == "amvera-davidkonkin-cnpg-monitoring-db-rw"
+    assert parts["user"] == "monitoring"
+    assert parts["dbname"] == "monitoring"
+
+
+def test_db_parts_can_be_overridden(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DB_PASSWORD", "p")
+    monkeypatch.setenv("DB_HOST", "other-host")
+    monkeypatch.setenv("DB_NAME", "other-db")
+    _, parts = database_source()
+    assert parts["host"] == "other-host"
+    assert parts["dbname"] == "other-db"
+
+
+def test_nothing_set_means_no_source(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DB_PASSWORD", raising=False)
+    assert database_source() == (None, None)

@@ -231,11 +231,42 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
 
 # --- запуск ---------------------------------------------------------------
 
+DB_DEFAULTS = {
+    "host": "amvera-davidkonkin-cnpg-monitoring-db-rw",
+    "port": "5432",
+    "user": "monitoring",
+    "dbname": "monitoring",
+}
+
+
+def database_source() -> tuple:
+    """Как подключаться к базе: ('url', dsn) либо ('parts', {...}), либо (None, None).
+
+    DATABASE_URL удобен одной строкой, но пароль в нём обязан быть
+    percent-кодирован: один символ @ или # роняет разбор ещё до подключения,
+    и ошибка выглядит как сбой парсера, а не как «поправьте пароль».
+    Поэтому DB_PASSWORD — равноправный путь, где экранировать не нужно ничего.
+    """
+    url = os.getenv("DATABASE_URL")
+    if url:
+        return "url", url
+    password = os.getenv("DB_PASSWORD")
+    if password:
+        parts = dict(DB_DEFAULTS, password=password)
+        for env_name, key in (("DB_HOST", "host"), ("DB_PORT", "port"),
+                              ("DB_USER", "user"), ("DB_NAME", "dbname")):
+            if os.getenv(env_name):
+                parts[key] = os.getenv(env_name)
+        return "parts", parts
+    return None, None
+
+
 def check_environment(dry_run: bool) -> list:
     """Чего не хватает для работы. Пустой список — всё на месте."""
     missing = []
-    if not dry_run and not os.getenv("DATABASE_URL"):
-        missing.append("DATABASE_URL — без базы находки некуда сохранять")
+    if not dry_run and database_source()[0] is None:
+        missing.append("DATABASE_URL или DB_PASSWORD — "
+                       "без базы находки некуда сохранять")
     if not os.getenv("OPENROUTER_API_KEY") and not os.getenv("ANTHROPIC_API_KEY"):
         missing.append("OPENROUTER_API_KEY — без него 7 факторов из 14 "
                        "не проставляются и всё уходит в DROP")
@@ -282,7 +313,19 @@ def build_deps(cfg, dry_run: bool) -> Deps:
 
     if not dry_run:
         from monitoring.db import Repo, apply_migration, connect
-        conn = connect(os.environ["DATABASE_URL"]).__enter__()
+        kind, source = database_source()
+        try:
+            ctx = connect(source) if kind == "url" else connect(**source)
+            conn = ctx.__enter__()
+        except Exception as exc:
+            if kind == "url":
+                raise RuntimeError(
+                    f"не удалось подключиться по DATABASE_URL: {exc}\n"
+                    "Если в пароле есть @ : / ? # или %, в URL их нужно "
+                    "percent-кодировать. Проще задать DB_PASSWORD отдельной "
+                    "переменной — там экранировать ничего не надо."
+                ) from exc
+            raise
         apply_migration(conn, ROOT / "sql" / "001_monitoring_map.sql")
         deps.repo = Repo(conn)
 

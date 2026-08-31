@@ -11,8 +11,17 @@ import psycopg
 
 
 @contextmanager
-def connect(dsn: str):
-    conn = psycopg.connect(dsn, autocommit=False)
+def connect(dsn: str = None, **parts):
+    """Соединение по строке DATABASE_URL или по отдельным параметрам.
+
+    Второй путь существует не для красоты: в URL пароль обязан быть
+    percent-кодирован, и один символ @ или # в нём роняет разбор строки
+    ещё до попытки подключиться. Ошибка при этом выглядит как невнятный
+    сбой парсера, а не как «поправьте пароль». Отдельные параметры
+    экранирования не требуют вовсе.
+    """
+    conn = psycopg.connect(dsn, autocommit=False) if dsn \
+        else psycopg.connect(autocommit=False, **parts)
     try:
         yield conn
         conn.commit()
