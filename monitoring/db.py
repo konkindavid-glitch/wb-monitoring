@@ -10,6 +10,20 @@ from uuid import uuid4
 import psycopg
 
 
+def open_connection(dsn: str = None, **parts):
+    """Долгоживущее соединение. Закрывать — вызывающему.
+
+    Отдельно от connect() намеренно. connect() — генератор-контекстменеджер, и
+    вытащить из него соединение через .__enter__(), не сохранив сам генератор,
+    нельзя: сборщик мусора убирает генератор, в yield прилетает GeneratorExit,
+    срабатывает finally с conn.close(), и соединение закрывается под ногами.
+    Ошибка при этом приходит не в момент подключения, а на первой же операции —
+    «the connection is closed», — и выглядит как проблема сети.
+    """
+    return psycopg.connect(dsn, autocommit=False) if dsn \
+        else psycopg.connect(autocommit=False, **parts)
+
+
 @contextmanager
 def connect(dsn: str = None, **parts):
     """Соединение по строке DATABASE_URL или по отдельным параметрам.

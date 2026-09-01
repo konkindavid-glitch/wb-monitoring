@@ -323,11 +323,11 @@ def build_deps(cfg, dry_run: bool) -> Deps:
     )
 
     if not dry_run:
-        from monitoring.db import Repo, apply_migration, connect
+        from monitoring.db import Repo, apply_migration, open_connection
         kind, source = database_source()
         try:
-            ctx = connect(source) if kind == "url" else connect(**source)
-            conn = ctx.__enter__()
+            conn = (open_connection(source) if kind == "url"
+                    else open_connection(**source))
         except Exception as exc:
             fallback = database_parts()
             if kind == "url" and fallback:
@@ -337,7 +337,7 @@ def build_deps(cfg, dry_run: bool) -> Deps:
                 # вместо падения: экранировать там нечего.
                 print(f"[warn] DATABASE_URL не сработал ({exc}); "
                       "перехожу на DB_PASSWORD")
-                conn = connect(**fallback).__enter__()
+                conn = open_connection(**fallback)
             elif kind == "url":
                 raise RuntimeError(
                     f"не удалось подключиться по DATABASE_URL: {exc}\n"
