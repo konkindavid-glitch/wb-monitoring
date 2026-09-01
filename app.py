@@ -215,9 +215,12 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
     deps.repo.save_heartbeat(report, state.get("run_id"))
 
     delivered = []
+    failed_sends = 0
     for hit in urgent:
         if deps.sender(format_urgent(hit), deps.token, deps.chat_id):
             delivered.append(hit["hit_id"])
+        else:
+            failed_sends += 1
 
     last_digest = state.get("last_digest_at")
     digest_due = (last_digest is None or
@@ -229,6 +232,20 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
                        deps.token, deps.chat_id):
             delivered += [hit["hit_id"] for hit in queued]
             state["last_digest_at"] = now
+            print(f"[delivery] дайджест отправлен: {len(queued)} материалов, "
+                  f"источников с проблемами: {len(degraded)}")
+        else:
+            failed_sends += 1
+
+    # Без этой строки непонятно, дошло ли что-то до бота: очередь может быть
+    # пустой по делу, а может — из-за молчащего Телеграма, и снаружи это
+    # выглядит одинаково.
+    if urgent or failed_sends:
+        print(f"[delivery] срочных: {len(urgent)}, отправлено: {len(delivered)}, "
+              f"не ушло: {failed_sends}")
+    if failed_sends:
+        print("[degraded] Телеграм не принимает сообщения — "
+              "проверьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID")
 
     deps.repo.mark_delivered(delivered)
     return report
