@@ -262,6 +262,35 @@ DB_DEFAULTS = {
 }
 
 
+def connect_database():
+    """Соединение с базой по любому из двух путей.
+
+    Одна точка на весь модуль намеренно: откат с DATABASE_URL на DB_PASSWORD
+    уже однажды разошёлся между build_deps и send_test_post, и проверочная
+    карточка ушла эталонной вместо настоящей находки.
+    """
+    from monitoring.db import open_connection
+
+    kind, source = database_source()
+    if kind is None:
+        raise RuntimeError("не задан ни DATABASE_URL, ни DB_PASSWORD")
+    try:
+        return open_connection(source) if kind == "url"             else open_connection(**source)
+    except Exception as exc:
+        fallback = database_parts()
+        if kind == "url" and fallback:
+            print(f"[warn] DATABASE_URL не сработал ({exc}); перехожу на DB_PASSWORD")
+            return open_connection(**fallback)
+        if kind == "url":
+            raise RuntimeError(
+                f"не удалось подключиться по DATABASE_URL: {exc}\n"
+                "Если в пароле есть @ : / ? # или %, в URL их нужно "
+                "percent-кодировать. Проще задать DB_PASSWORD отдельной "
+                "переменной — там экранировать ничего не надо."
+            ) from exc
+        raise
+
+
 def database_parts():
     """Параметры подключения из отдельных переменных или None.
 
@@ -346,30 +375,8 @@ def build_deps(cfg, dry_run: bool) -> Deps:
     )
 
     if not dry_run:
-        from monitoring.db import Repo, apply_migration, open_connection
-        kind, source = database_source()
-        try:
-            conn = (open_connection(source) if kind == "url"
-                    else open_connection(**source))
-        except Exception as exc:
-            fallback = database_parts()
-            if kind == "url" and fallback:
-                # DATABASE_URL не разобрался — почти всегда это спецсимвол
-                # в пароле, который в URL обязан быть percent-кодирован.
-                # Раз отдельные параметры заданы, переключаемся на них
-                # вместо падения: экранировать там нечего.
-                print(f"[warn] DATABASE_URL не сработал ({exc}); "
-                      "перехожу на DB_PASSWORD")
-                conn = open_connection(**fallback)
-            elif kind == "url":
-                raise RuntimeError(
-                    f"не удалось подключиться по DATABASE_URL: {exc}\n"
-                    "Если в пароле есть @ : / ? # или %, в URL их нужно "
-                    "percent-кодировать. Проще задать DB_PASSWORD отдельной "
-                    "переменной — там экранировать ничего не надо."
-                ) from exc
-            else:
-                raise
+        from monitoring.db import Repo, apply_migration
+        conn = connect_database()
         apply_migration(conn, ROOT / "sql" / "001_monitoring_map.sql")
         deps.repo = Repo(conn)
 
@@ -440,13 +447,11 @@ def send_test_post(cfg, dry_run: bool = False) -> bool:
 
     hit = None
     try:
-        from monitoring.db import Repo, open_connection
-        kind, source = database_source()
-        if kind:
-            conn = open_connection(source) if kind == "url"                 else open_connection(**source)
-            best = Repo(conn)._pending(("URGENT", "QUEUE", "BACKLOG", "DROP"), 1)
-            hit = best[0] if best else None
-            conn.close()
+        from monitoring.db import Repo
+        conn = connect_database()
+        best = Repo(conn)._pending(("URGENT", "QUEUE", "BACKLOG", "DROP"), 1)
+        hit = best[0] if best else None
+        conn.close()
     except Exception as exc:
         print(f"[test-post] база недоступна ({exc}), беру эталонную карточку")
 
