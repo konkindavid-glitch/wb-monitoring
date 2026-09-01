@@ -293,4 +293,32 @@ CREATE INDEX IF NOT EXISTS idx_triagetransiti_1
 -- это source_key, и он объявлен NOT NULL. Ограничение лишнее.
 ALTER TABLE monitoring_hits DROP CONSTRAINT IF EXISTS origin_present;
 
+-- ---------------------------------------------------------------------------
+--  9. ЖУРНАЛ РЕШЕНИЙ РЕДАКТОРА
+--  Что нажали под карточкой: запостить, отредактировать, удалить.
+-- ---------------------------------------------------------------------------
+
+-- Внешнего ключа на monitoring_hits намеренно нет. Журнал должен принимать
+-- решение по любой карточке — в том числе по эталонной из проверки связи,
+-- которой в таблице находок нет, и по находке, вычищенной ретеншеном.
+-- Внешний ключ здесь уронил бы запись решения, а решение редактора — это
+-- то, по чему потом калибруются пороги; терять его нельзя.
+CREATE TABLE IF NOT EXISTS moderation_decisions (
+    decision_id       text PRIMARY KEY,
+    hit_id            text NOT NULL,
+    action            text NOT NULL CHECK (action IN ('pub','edit','del')),
+    chat_id           text NOT NULL,
+    message_id        bigint,
+    -- Сообщение-приглашение к правке: по ответу на него находится находка.
+    prompt_message_id bigint,
+    editor_id         text,
+    editor_note       text,
+    decided_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_moderationdec_1
+    ON moderation_decisions (hit_id, decided_at DESC);
+CREATE INDEX IF NOT EXISTS idx_moderationdec_2
+    ON moderation_decisions (prompt_message_id)
+    WHERE prompt_message_id IS NOT NULL;
+
 COMMIT;

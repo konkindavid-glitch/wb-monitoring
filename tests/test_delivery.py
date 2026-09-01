@@ -1,4 +1,4 @@
-from monitoring.delivery import TELEGRAM_LIMIT, format_digest, format_urgent
+from monitoring.delivery import TELEGRAM_LIMIT, format_digest
 
 HIT = {
     "hit_id": "hit_a1", "title": "WB меняет тариф хранения", "score": 130,
@@ -10,26 +10,6 @@ HIT = {
     },
 }
 REPORT = {"urgent_count": 1, "queue_count": 2}
-
-
-def test_urgent_shows_score_title_and_link():
-    text = format_urgent(HIT)
-    assert "130" in text
-    assert "WB меняет тариф хранения" in text
-    assert "https://x.invalid/a" in text
-
-
-def test_urgent_lists_only_fired_factors_with_rationale():
-    text = format_urgent(HIT)
-    assert "тарифы WB" in text
-    assert "хранение" in text
-    assert "ai_link" not in text
-
-
-def test_urgent_says_it_is_not_permission_to_publish():
-    """URGENT означает «проверить первым», и в сообщении это должно быть видно."""
-    assert "проверить" in format_urgent(HIT).lower()
-    assert "не публиковать" in format_urgent(HIT).lower()
 
 
 def test_digest_fits_telegram_limit():

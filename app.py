@@ -12,6 +12,7 @@
 режимами — один флаг.
 """
 import argparse
+import json
 import os
 import sys
 import threading
@@ -35,7 +36,12 @@ from monitoring import stop_rules
 from monitoring.collectors import doc_diff, rss
 from monitoring.config import load_config
 from monitoring.confirmation import count_independent_sources, repeats_of
-from monitoring.delivery import format_digest, format_urgent, send
+from monitoring.delivery import (answer_callback, delete_message,
+                                 format_digest, get_updates,
+                                 replace_text, send, send_card)
+from monitoring.moderation import (EDIT, EDIT_PROMPT, OUTCOME_TOAST,
+                                   PUBLISH, REJECT, keyboard,
+                                   outcome_text, parse_callback)
 from monitoring.factors.judgment import judgment_factors
 from monitoring.factors.mechanical import mechanical_factors
 from monitoring.heartbeat import build_report, map_hits_to_questions
@@ -62,6 +68,7 @@ class Deps:
     store: object = None
     sources: list = None
     sender: object = send
+    dry_run: bool = False
     token: str = ""
     chat_id: str = ""
 
@@ -218,7 +225,7 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
     delivered = []
     failed_sends = 0
     for hit in urgent:
-        if deps.sender(format_urgent(hit), deps.token, deps.chat_id):
+        if deliver_card(hit, deps):
             delivered.append(hit["hit_id"])
         else:
             failed_sends += 1
@@ -250,6 +257,164 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
 
     deps.repo.mark_delivered(delivered)
     return report
+
+
+def render_cover(hit: dict):
+    """Обложка или None. Ни отсутствие шрифта, ни отсутствие Pillow
+    не должны отменять доставку находки — текст важнее картинки."""
+    try:
+        from monitoring.cover import render
+        return render(hit)
+    except ImportError:
+        print("[degraded] Pillow не установлен — карточки уходят без обложки")
+    except Exception as exc:
+        print(f"[degraded] обложка не отрисовалась: {exc}")
+    return None
+
+
+def deliver_card(hit: dict, deps, is_test: bool = False) -> bool:
+    """Карточка редактору: обложка, разбор, три кнопки решения."""
+    if deps.dry_run:
+        print(format_card(hit, is_test=is_test))
+        return True
+    message_id = send_card(
+        format_card(hit, is_test=is_test), deps.token, deps.chat_id,
+        cover=render_cover(hit),
+        reply_markup=keyboard(hit.get("hit_id", "hit_sample")))
+    return message_id is not None
+
+
+# --- решения редактора -----------------------------------------------------
+
+# Состояние находки после каждого решения. «Запостить» переводит в HANDED_OFF:
+# находка согласована и отдана наружу. Публикацией займётся слой публикации —
+# текстов постов этот модуль не пишет, см. README «Границы модуля».
+STATE_AFTER = {PUBLISH: "HANDED_OFF", REJECT: "DROPPED"}
+
+# Смещение getUpdates хранится на диске: без него после перезапуска Телеграм
+# отдаёт сутки накопленных нажатий заново, и редактор получает шквал уже
+# принятых решений.
+def offset_path() -> Path:
+    snapshots = Path(os.getenv("SNAPSHOT_DIR", str(ROOT / "data" / "snapshots")))
+    return snapshots.parent / "telegram-offset"
+
+
+def read_offset() -> int:
+    try:
+        return int(offset_path().read_text().strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def write_offset(value: int) -> None:
+    try:
+        path = offset_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(value))
+    except OSError as exc:
+        print(f"[degraded] смещение обновлений не сохранено: {exc}")
+
+
+def handle_callback(query: dict, deps) -> None:
+    """Нажатие кнопки под карточкой."""
+    parsed = parse_callback(query.get("data", ""))
+    if parsed is None:
+        return
+    action, hit_id = parsed
+    message = query.get("message") or {}
+    message_id = message.get("message_id")
+    chat_id = str((message.get("chat") or {}).get("id", deps.chat_id))
+    editor = (query.get("from") or {}).get("id")
+
+    # Часики на кнопке гасятся первым делом: всё остальное может занять
+    # секунды, а редактор всё это время смотрит на крутилку.
+    answer_callback(query.get("id", ""), deps.token, OUTCOME_TOAST.get(action))
+
+    prompt_message_id = None
+    if action == EDIT:
+        prompt_message_id = send_prompt(chat_id, deps)
+
+    try:
+        deps.repo.save_decision(hit_id, action, chat_id, message_id,
+                                prompt_message_id, editor)
+        if action in STATE_AFTER:
+            deps.repo.set_hit_state(hit_id, STATE_AFTER[action])
+    except Exception as exc:
+        print(f"[fail] решение не записано: {exc}")
+        if hasattr(deps.repo, "rollback"):
+            deps.repo.rollback()
+
+    if action == REJECT:
+        delete_message(message_id, deps.token, chat_id)
+    else:
+        # Карточка берётся из самого сообщения: перечитывать базу незачем,
+        # а для эталонной карточки её там и нет.
+        card = message.get("caption") or message.get("text") or ""
+        replace_text(message_id, outcome_text(action, card), deps.token,
+                     chat_id, has_caption="caption" in message)
+
+    print(f"[moderation] {action} · {hit_id}")
+
+
+def send_prompt(chat_id: str, deps):
+    """Приглашение прислать правку ответом. Возвращает message_id или None."""
+    from monitoring.delivery import API, _call
+    result = _call(API.format(token=deps.token),
+                   {"chat_id": chat_id, "text": EDIT_PROMPT,
+                    "reply_markup": json.dumps({"force_reply": True})})
+    return result.get("message_id") if result else None
+
+
+def handle_message(message: dict, deps) -> None:
+    """Ответ редактора на приглашение к правке."""
+    reply_to = (message.get("reply_to_message") or {}).get("message_id")
+    text = (message.get("text") or "").strip()
+    if not reply_to or not text:
+        return
+    try:
+        found = deps.repo.hit_id_awaiting_note(reply_to)
+        if not found:
+            return
+        decision_id, hit_id = found
+        deps.repo.save_note(decision_id, text)
+    except Exception as exc:
+        print(f"[fail] правка не записана: {exc}")
+        if hasattr(deps.repo, "rollback"):
+            deps.repo.rollback()
+        return
+    send(f"Правка записана к находке {hit_id}.", deps.token,
+         str((message.get("chat") or {}).get("id", deps.chat_id)))
+    print(f"[moderation] правка · {hit_id}")
+
+
+def poll_moderation(deps, seconds: int) -> None:
+    """Слушает нажатия отведённое время, потом возвращает управление циклу.
+
+    Длинный опрос вместо коротких запросов: соединение держит сервер Телеграма,
+    трафика почти нет, а реакция на кнопку приходит сразу, а не через минуту.
+    """
+    if deps.dry_run or not deps.token:
+        time.sleep(seconds)
+        return
+
+    deadline = time.monotonic() + seconds
+    offset = read_offset()
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        updates = get_updates(deps.token, offset, timeout=int(min(25, remaining)))
+        for update in updates:
+            offset = update["update_id"] + 1
+            try:
+                if "callback_query" in update:
+                    handle_callback(update["callback_query"], deps)
+                elif "message" in update:
+                    handle_message(update["message"], deps)
+            except Exception as exc:
+                print(f"[fail] обновление {update.get('update_id')}: {exc}")
+        if updates:
+            write_offset(offset)
 
 
 # --- запуск ---------------------------------------------------------------
@@ -370,6 +535,7 @@ def build_deps(cfg, dry_run: bool) -> Deps:
         fetcher=Fetcher(),
         store=SnapshotStore(snapshot_dir),
         sources=cfg.source_list(),
+        dry_run=dry_run,
         token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
     )
@@ -461,12 +627,8 @@ def send_test_post(cfg, dry_run: bool = False) -> bool:
     else:
         print(f"[test-post] беру находку из базы: {hit.get('score')} баллов")
 
-    text = format_card(hit, is_test=True)
-    if dry_run:
-        print(text)
-        return True
-
-    ok = send(text, token, chat_id)
+    probe = Deps(cfg=cfg, dry_run=dry_run, token=token, chat_id=chat_id)
+    ok = deliver_card(hit, probe, is_test=True)
     print("[test-post] отправлено" if ok else "[test-post] Телеграм не принял")
     return ok
 
@@ -581,7 +743,7 @@ def main():
 
         if args.once:
             break
-        time.sleep(POLL_SECONDS)
+        poll_moderation(deps, POLL_SECONDS)
 
 
 if __name__ == "__main__":

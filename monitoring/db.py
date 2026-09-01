@@ -210,7 +210,8 @@ class Repo:
     def _pending(self, decisions: tuple, limit: int) -> list:
         with self.conn.cursor() as cur:
             cur.execute(
-                """SELECT hit_id, title, url, score, decision, factors
+                """SELECT hit_id, title, url, score, decision, factors,
+                          platforms, topics
                      FROM monitoring_hits
                     WHERE decision = ANY(%s) AND handed_off_at IS NULL
                     ORDER BY score DESC, discovered_at
@@ -241,6 +242,73 @@ class Repo:
                 """SELECT query_id FROM monitoring_queries
                     WHERE consecutive_failures >= 3 AND enabled""")
             return [row[0] for row in cur.fetchall()]
+
+    # --- решения редактора ------------------------------------------------
+
+    def save_decision(self, hit_id: str, action: str, chat_id: str,
+                      message_id=None, prompt_message_id=None,
+                      editor_id=None) -> str:
+        """Пишет нажатие кнопки. Возвращает decision_id."""
+        decision_id = _uid("dec")
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO moderation_decisions
+                       (decision_id, hit_id, action, chat_id, message_id,
+                        prompt_message_id, editor_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (decision_id, hit_id, action, str(chat_id), message_id,
+                 prompt_message_id, editor_id and str(editor_id)))
+        self.conn.commit()
+        return decision_id
+
+    def hit_id_awaiting_note(self, prompt_message_id: int):
+        """Находка, к которой редактор пишет правку, или None.
+
+        Берётся последнее приглашение без заполненной правки: если редактор
+        нажал «Редактировать» дважды, ответ относится к тому приглашению,
+        на которое он ответил, а не к первому по времени.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """SELECT decision_id, hit_id FROM moderation_decisions
+                    WHERE prompt_message_id = %s AND editor_note IS NULL
+                    ORDER BY decided_at DESC LIMIT 1""",
+                (prompt_message_id,))
+            row = cur.fetchone()
+        return (row[0], row[1]) if row else None
+
+    def save_note(self, decision_id: str, note: str) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE moderation_decisions SET editor_note = %s "
+                "WHERE decision_id = %s", (note, decision_id))
+        self.conn.commit()
+
+    def set_hit_state(self, hit_id: str, state: str) -> None:
+        """Перевод находки в состояние по решению редактора.
+
+        Находка из проверки связи в таблице отсутствует — UPDATE просто
+        не заденет ни одной строки, и это правильно: падать не на чем.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """UPDATE monitoring_hits
+                      SET state = %s, updated_at = now(),
+                          handed_off_at = COALESCE(handed_off_at,
+                              CASE WHEN %s = 'HANDED_OFF' THEN now() END)
+                    WHERE hit_id = %s""", (state, state, hit_id))
+        self.conn.commit()
+
+    def hit_by_id(self, hit_id: str):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """SELECT hit_id, title, url, score, decision, factors,
+                          platforms, topics
+                     FROM monitoring_hits WHERE hit_id = %s""", (hit_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return dict(zip([c.name for c in cur.description], row))
 
     # --- heartbeat --------------------------------------------------------
 
