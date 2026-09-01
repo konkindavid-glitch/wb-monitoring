@@ -186,8 +186,6 @@ CREATE TABLE IF NOT EXISTS monitoring_hits (
     updated_at      timestamptz NOT NULL DEFAULT now(),
 
     CONSTRAINT score_within_bounds CHECK (score IS NULL OR score BETWEEN -180 AND 160),
-    -- Находка либо найдена запросом, либо принесена сигналом. Не ни тем, ни другим.
-    CONSTRAINT origin_present CHECK (query_id IS NOT NULL OR signal_key IS NOT NULL),
     -- Посчитанная находка обязана иметь разбор: сумма без разбора непересчитываема.
     CONSTRAINT scored_has_factors CHECK (
         state = 'NEW' OR (score IS NOT NULL AND factors IS NOT NULL AND decision IS NOT NULL)
@@ -283,5 +281,16 @@ CREATE TABLE IF NOT EXISTS triage_transitions (
 );
 CREATE INDEX IF NOT EXISTS idx_triagetransiti_1
     ON triage_transitions (hit_id, occurred_at);
+
+-- ---------------------------------------------------------------------------
+--  8. ПРАВКИ ПОВЕРХ УЖЕ СОЗДАННОЙ СХЕМЫ
+--  Идемпотентны: применяются и к чистой базе, и к существующей.
+-- ---------------------------------------------------------------------------
+
+-- origin_present требовал у находки query_id или signal_key. Это неверно:
+-- материал из RSS-ленты приходит напрямую, без того и другого, и вставка
+-- падала на первом же элементе. Происхождение у находки есть всегда —
+-- это source_key, и он объявлен NOT NULL. Ограничение лишнее.
+ALTER TABLE monitoring_hits DROP CONSTRAINT IF EXISTS origin_present;
 
 COMMIT;

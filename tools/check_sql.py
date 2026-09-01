@@ -88,7 +88,9 @@ check("every REFERENCES target exists in this file", not unresolved,
 promised_constraints = [
     ("topic_category_by_level", "subtopic must carry a category, top level must not"),
     ("score_within_bounds", "score stays inside -180..160"),
-    ("origin_present", "a hit comes from a query or a signal"),
+    # origin_present intentionally removed: it demanded query_id or signal_key,
+    # but an RSS item arrives straight from a feed with neither, and the very
+    # first insert failed on it. A hit always has source_key, declared NOT NULL.
     ("scored_has_factors", "a scored hit must carry its factor breakdown"),
     ("dropped_has_reason", "a dropped hit must carry a reason"),
     ("answers_is_array", "heartbeat answers is a json array"),
@@ -103,6 +105,11 @@ code_only = re.sub(r"--[^\n]*\n", "\n", sql_text).strip()
 check("migration is wrapped in a transaction",
       code_only.startswith("BEGIN;") and code_only.endswith("COMMIT;"),
       "starts %r, ends %r" % (code_only[:8], code_only[-8:]))
+
+check("origin_present is dropped, not re-created",
+      "DROP CONSTRAINT IF EXISTS origin_present" in sql_text
+      and "CONSTRAINT origin_present CHECK" not in sql_text,
+      "an RSS hit has neither query_id nor signal_key; source_key is its origin")
 
 # --- idempotency -----------------------------------------------------------
 # The service restarts and re-applies the migration. Bare CREATE TYPE / CREATE

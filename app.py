@@ -490,6 +490,11 @@ def main():
                 print(f"[tick] class={cadence_class} {counters}")
             except Exception as exc:
                 print(f"[fail] class={cadence_class}: {exc}")
+                # Откат обязателен: Postgres переводит транзакцию в aborted,
+                # и без него каждая следующая команда отвечает «current
+                # transaction is aborted» — сыплются все оставшиеся классы.
+                if hasattr(deps.repo, "rollback"):
+                    deps.repo.rollback()
             finally:
                 release_tick_lock(cadence_class)
             state["last_run_at"][cadence_class] = now
@@ -498,6 +503,8 @@ def main():
             run_heartbeat(deps, state, now)
         except Exception as exc:
             print(f"[fail] heartbeat: {exc}")
+            if hasattr(deps.repo, "rollback"):
+                deps.repo.rollback()
 
         if args.once:
             break

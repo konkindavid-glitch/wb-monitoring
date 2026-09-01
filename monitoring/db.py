@@ -84,6 +84,19 @@ class Repo:
     def __init__(self, conn):
         self.conn = conn
 
+    def rollback(self) -> None:
+        """Возвращает соединение в рабочее состояние после сбоя.
+
+        Без этого одна неудачная вставка отравляет всё соединение: Postgres
+        переводит транзакцию в состояние aborted, и каждая следующая команда
+        отвечает «current transaction is aborted». На боевом запуске из-за
+        этого после первой ошибки посыпались все оставшиеся классы и heartbeat.
+        """
+        try:
+            self.conn.rollback()
+        except Exception:
+            pass
+
     # --- прогоны ----------------------------------------------------------
 
     def start_run(self, cadence: str) -> str:
