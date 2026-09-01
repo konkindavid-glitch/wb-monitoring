@@ -20,9 +20,14 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+# line_buffering обязателен: в контейнере stdout идёт не в терминал, а в канал,
+# и Python копит вывод блоками по несколько килобайт. Логи тогда появляются
+# с большой задержкой или только при падении — аварийное завершение сбрасывает
+# буфер. Для мониторинга это худший из вариантов: работающий сервис выглядит
+# мёртвым, а видно только то, что упало.
 try:
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+    sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
 except Exception:
     pass
 
@@ -464,6 +469,13 @@ def main():
         deps.sender = lambda text, token, chat: (print(text), True)[1]
 
     state = {"last_run_at": {}, "hits_by_question": {}}
+
+    # Отметка старта: по ней видно, что сервис жив, ещё до первого тика.
+    # Первый полный проход опрашивает все шесть классов и может занять
+    # несколько минут — без этой строки он выглядит как зависание.
+    print(f"[start] сборщик запущен, классов: {len(cadence)}, "
+          f"источников: {len(deps.sources or [])}, "
+          f"классификатор: {'есть' if deps.judge else 'НЕТ'}")
 
     while True:
         now = datetime.now(timezone.utc)
