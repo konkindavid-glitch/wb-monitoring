@@ -39,6 +39,7 @@ from monitoring.delivery import format_digest, format_urgent, send
 from monitoring.factors.judgment import judgment_factors
 from monitoring.factors.mechanical import mechanical_factors
 from monitoring.heartbeat import build_report, map_hits_to_questions
+from monitoring.post import format_card, sample_card
 from monitoring.scoring import score_item
 from monitoring.topics import build_matchers, classify, detect_platform
 
@@ -424,6 +425,47 @@ class DryRunRepo:
         pass
 
 
+def send_test_post(cfg, dry_run: bool = False) -> bool:
+    """Отправляет карточку в Телеграм: проверка, что связь работает.
+
+    Берёт лучшую находку из базы; если база пуста или недоступна — эталонную
+    из docs/01 §2.3. Выдумывать содержимое нельзя даже в проверочном
+    сообщении, поэтому эталон честно помечен как образец.
+    """
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    if not dry_run and (not token or not chat_id):
+        print("[test-post] нет TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID")
+        return False
+
+    hit = None
+    try:
+        from monitoring.db import Repo, open_connection
+        kind, source = database_source()
+        if kind:
+            conn = open_connection(source) if kind == "url"                 else open_connection(**source)
+            best = Repo(conn)._pending(("URGENT", "QUEUE", "BACKLOG", "DROP"), 1)
+            hit = best[0] if best else None
+            conn.close()
+    except Exception as exc:
+        print(f"[test-post] база недоступна ({exc}), беру эталонную карточку")
+
+    if hit is None:
+        hit = sample_card()
+        print("[test-post] в базе нет находок — отправляю эталонную карточку")
+    else:
+        print(f"[test-post] беру находку из базы: {hit.get('score')} баллов")
+
+    text = format_card(hit, is_test=True)
+    if dry_run:
+        print(text)
+        return True
+
+    ok = send(text, token, chat_id)
+    print("[test-post] отправлено" if ok else "[test-post] Телеграм не принял")
+    return ok
+
+
 def run_onboarding(cfg) -> list:
     """Проверяет каждый источник и печатает вердикт.
 
@@ -463,6 +505,8 @@ def main():
                         help="без записи в базу и без отправки")
     parser.add_argument("--onboard", action="store_true",
                         help="проверить источники и выйти")
+    parser.add_argument("--test-post", action="store_true",
+                        help="отправить карточку в Телеграм и выйти")
     args = parser.parse_args()
 
     cfg = load_config(ROOT)
@@ -470,6 +514,13 @@ def main():
     if args.onboard:
         run_onboarding(cfg)
         return
+
+    # Переменной окружения тоже можно: в Амвере запустить команду с флагом
+    # негде, а выставить TEST_POST=1 и перезапустить контейнер — можно.
+    if args.test_post or os.getenv("TEST_POST"):
+        send_test_post(cfg, dry_run=args.dry_run)
+        if args.test_post:
+            return
 
     # Проверка до подключений: без DATABASE_URL сервис падал бы на первой
     # строке и Амвера крутила бы его в цикле перезапусков.
