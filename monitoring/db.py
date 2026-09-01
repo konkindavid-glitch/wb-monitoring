@@ -33,12 +33,24 @@ def connect(dsn: str = None, **parts):
 
 
 def apply_migration(conn, sql_path: Path) -> None:
-    """Применяет миграцию. Безопасна при повторном вызове — сервис перезапускается."""
+    """Применяет миграцию. Безопасна при повторном вызове — сервис перезапускается.
+
+    Файл содержит собственные BEGIN и COMMIT: он рассчитан и на запуск через
+    `psql -f`. Внутри соединения с autocommit=False psycopg открывает свою
+    транзакцию первой, и тогда BEGIN из файла ругается «транзакция уже идёт»,
+    а COMMIT закрывает чужую. Поэтому на время миграции отдаём управление
+    транзакциями самому файлу.
+    """
     with io.open(sql_path, encoding="utf-8") as fh:
         sql = fh.read()
-    with conn.cursor() as cur:
-        cur.execute(sql)
-    conn.commit()
+
+    previous = conn.autocommit
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+    finally:
+        conn.autocommit = previous
 
 
 def _uid(prefix: str) -> str:
@@ -114,7 +126,8 @@ class Repo:
                         score, factors, decision, drop_reason, backlog_until, state)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                            'TRIAGED')
-                   ON CONFLICT (url_hash) DO NOTHING""",
+                   ON CONFLICT (url_hash) DO NOTHING
+                   RETURNING hit_id""",
                 (hit_id, run_id, item.url, item.url_hash, item.title,
                  item.body[:500], item.discovered_at, item.published_at,
                  [item.platform], list(item.topics), list(item.categories),
@@ -122,6 +135,21 @@ class Repo:
                  json.dumps(result.factors, ensure_ascii=False), result.decision,
                  "SCORE_BELOW_40" if result.decision == "DROP" else None,
                  backlog_until))
+            inserted = cur.fetchone()
+
+            if inserted is None:
+                # Адрес уже в базе — вставки не было. Писать переход по
+                # несуществующему hit_id нельзя: внешний ключ уронил бы весь
+                # тик. Такое случается, когда один материал приходит из двух
+                # лент сразу, и is_known его не поймал: он проверяет базу,
+                # а не текущую пачку.
+                cur.execute(
+                    "SELECT hit_id FROM monitoring_hits WHERE url_hash = %s",
+                    (item.url_hash,))
+                existing = cur.fetchone()
+                self.conn.commit()
+                return existing[0] if existing else hit_id
+
             cur.execute(
                 """INSERT INTO triage_transitions
                        (hit_id, to_decision, to_score, reason)
