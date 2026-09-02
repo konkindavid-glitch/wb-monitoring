@@ -18,6 +18,11 @@ import httpx
 IPV4_ANY = "0.0.0.0"
 
 
+def plain_client(timeout: float, headers: dict = None) -> httpx.Client:
+    """Обычный клиент: семейство адресов выбирает система."""
+    return httpx.Client(timeout=timeout, headers=headers or {})
+
+
 def ipv4_client(timeout: float, headers: dict = None) -> httpx.Client:
     """Клиент, привязанный к IPv4. При отказе привязки — обычный клиент."""
     try:

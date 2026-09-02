@@ -128,3 +128,75 @@ def test_ipv4_binding_failure_still_yields_a_working_client(monkeypatch, capsys)
     assert client is not None
     assert "IPv4-привязка недоступна" in capsys.readouterr().out
     client.close()
+
+
+# --- выбор пути до Телеграма -----------------------------------------------
+
+import httpx
+import pytest
+
+from monitoring import delivery
+
+
+@pytest.fixture(autouse=False)
+def clean_clients(monkeypatch):
+    monkeypatch.setattr(delivery, "_CLIENTS", {})
+    monkeypatch.setattr(delivery, "_WORKING", None)
+
+
+class Stub:
+    def __init__(self, works):
+        self.works, self.calls = works, 0
+
+    def post(self, url, **kw):
+        self.calls += 1
+        if not self.works:
+            raise httpx.ConnectError("нет маршрута")
+        return "ответ"
+
+
+def install(monkeypatch, by_family):
+    monkeypatch.setattr(delivery, "_CLIENTS", dict(by_family))
+    monkeypatch.setattr(delivery, "_WORKING", None)
+    return by_family
+
+
+def test_falls_back_to_ipv4_when_the_default_path_is_dead(monkeypatch, capsys):
+    """Жёсткая привязка к IPv4 была ошибкой — она ломала и то, что работало.
+    Пробовать надо оба пути."""
+    stubs = install(monkeypatch, {False: Stub(False), True: Stub(True)})
+    assert delivery._post("https://x/botT/getMe") == "ответ"
+    assert stubs[True].calls == 1
+    assert "IPv4" in capsys.readouterr().out
+
+
+def test_default_path_is_preferred_when_it_works(monkeypatch):
+    stubs = install(monkeypatch, {False: Stub(True), True: Stub(False)})
+    assert delivery._post("https://x/botT/getMe") == "ответ"
+    assert stubs[True].calls == 0
+
+
+def test_working_path_is_remembered(monkeypatch):
+    """Пробовать оба пути на каждом запросе — удваивать задержку впустую."""
+    stubs = install(monkeypatch, {False: Stub(False), True: Stub(True)})
+    for _ in range(3):
+        delivery._post("https://x/botT/getMe")
+    assert stubs[False].calls == 1
+    assert stubs[True].calls == 3
+
+
+def test_both_paths_dead_raises_so_the_reason_reaches_the_log(monkeypatch):
+    install(monkeypatch, {False: Stub(False), True: Stub(False)})
+    with pytest.raises(httpx.HTTPError):
+        delivery._post("https://x/botT/getMe")
+
+
+def test_a_working_path_that_dies_is_retried_from_scratch(monkeypatch):
+    """Площадка чинит маршрут — бот обязан ожить сам, без пересборки."""
+    dead, alive = Stub(False), Stub(True)
+    install(monkeypatch, {False: dead, True: alive})
+    delivery._post("https://x/botT/getMe")          # выбран IPv4
+    monkeypatch.setattr(delivery, "_CLIENTS", {False: Stub(True), True: Stub(False)})
+    with pytest.raises(httpx.HTTPError):
+        delivery._post("https://x/botT/getMe")      # запомненный путь отвалился
+    assert delivery._post("https://x/botT/getMe") == "ответ"

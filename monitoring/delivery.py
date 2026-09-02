@@ -84,20 +84,44 @@ ME_API = "https://api.telegram.org/bot{token}/getMe"
 CAPTION_LIMIT = 1024
 
 
-_CLIENT = None
+_CLIENTS = {}
+_WORKING = None
+
+
+def _client(ipv4: bool):
+    if ipv4 not in _CLIENTS:
+        from monitoring.net import ipv4_client, plain_client
+        _CLIENTS[ipv4] = ipv4_client(TIMEOUT) if ipv4 else plain_client(TIMEOUT)
+    return _CLIENTS[ipv4]
 
 
 def _post(url: str, **kwargs):
-    """Единственная точка выхода в сеть. Клиент общий и только по IPv4.
+    """Единственная точка выхода в сеть. Пробует оба пути, помнит рабочий.
 
-    Через неё же тесты подменяют сеть: подменять httpx.post целиком значило
-    бы трогать и коллекторы, которым IPv4-привязка не нужна.
+    Жёсткая привязка к IPv4 была ошибкой: в этом контейнере IPv4-адресов нет
+    вовсе, и запрос стал падать раньше, чем раньше. Но и обычный клиент здесь
+    не работает — уходит в родной IPv6 Телеграма, куда нет маршрута.
+    Какой из путей оживёт первым, зависит от того, что починят на стороне
+    площадки, поэтому пробуются оба, а удачный запоминается.
+
+    Через эту же функцию тесты подменяют сеть: подменять httpx.post целиком
+    значило бы трогать и коллекторы, которым всё это не нужно.
     """
-    global _CLIENT
-    if _CLIENT is None:
-        from monitoring.net import ipv4_client
-        _CLIENT = ipv4_client(TIMEOUT)
-    return _CLIENT.post(url, **kwargs)
+    global _WORKING
+    order = [_WORKING] if _WORKING is not None else [False, True]
+    last = None
+    for ipv4 in order:
+        try:
+            response = _client(ipv4).post(url, **kwargs)
+        except httpx.HTTPError as exc:
+            last = exc
+            continue
+        if _WORKING is None:
+            _WORKING = ipv4
+            print(f"[net] Телеграм отвечает по {'IPv4' if ipv4 else 'IPv6'}")
+        return response
+    _WORKING = None
+    raise last
 
 
 def _method(url: str) -> str:

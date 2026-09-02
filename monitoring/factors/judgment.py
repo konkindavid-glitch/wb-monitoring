@@ -85,12 +85,10 @@ class OpenRouterClient:
         self._client = client
 
     def complete(self, prompt: str) -> str:
-        from monitoring.net import ipv4_client
+        from monitoring.net import plain_client
 
-        # По IPv4, как и Телеграм: у openrouter.ai тоже есть AAAA-запись,
-        # а маршрута для IPv6 в контейнере нет — запрос упал бы с ENETUNREACH.
         if self._client is None:
-            self._client = ipv4_client(self._timeout)
+            self._client = plain_client(self._timeout)
         response = self._client.post(
             self.URL,
             headers={

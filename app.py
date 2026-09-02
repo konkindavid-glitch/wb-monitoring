@@ -511,6 +511,15 @@ def check_telegram(deps) -> None:
     состояние обязано быть громким, а не выясняться перебором догадок.
     """
     from monitoring.delivery import bot_identity, webhook_info
+    from monitoring.netcheck import report
+
+    # Факты о сети печатаются до попытки достучаться: три предыдущих объяснения
+    # отказа были догадками, и каждая стоила пересборки.
+    try:
+        for line in report():
+            print(line)
+    except Exception as exc:
+        print(f"[net] проверка сети не удалась: {exc}")
 
     if not deps.token:
         print("[degraded] нет TELEGRAM_BOT_TOKEN — кнопки работать не будут")
