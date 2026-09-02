@@ -43,25 +43,88 @@ def test_missing_font_yields_no_cover_instead_of_crashing(monkeypatch):
     assert cover.render({"title": "Заголовок", "score": 90}) is None
 
 
-def test_render_returns_png_of_expected_size():
-    png = cover.render({"title": "Wildberries меняет тариф хранения",
-                        "score": 130, "decision": "URGENT",
-                        "platforms": ["Wildberries"]})
-    assert png[:8] == b"\x89PNG\r\n\x1a\n"
-    from PIL import Image
+def open_cover(data):
     import io
-    assert Image.open(io.BytesIO(png)).size == (cover.WIDTH, cover.HEIGHT)
+
+    from PIL import Image
+    return Image.open(io.BytesIO(data))
 
 
-def test_band_changes_the_colour():
-    """Полоса очереди должна читаться до текста — значит фон обязан отличаться."""
-    def top_left(decision):
-        from PIL import Image
-        import io
-        png = cover.render({"title": "Т", "score": 1, "decision": decision})
-        return Image.open(io.BytesIO(png)).convert("RGB").getpixel((5, 5))
+def test_render_returns_an_image_of_post_proportions():
+    """4:5 — вертикаль, которую Телеграм показывает в ленте крупнее всего."""
+    image = open_cover(cover.render({"title": "Wildberries меняет тариф",
+                                     "decision": "URGENT",
+                                     "platforms": ["WILDBERRIES"]}))
+    assert image.format == "JPEG"
+    assert image.size == (cover.WIDTH, cover.HEIGHT) == (1080, 1350)
 
-    assert top_left("URGENT") != top_left("BACKLOG")
+
+def test_platform_changes_the_colour():
+    """Принадлежность площадке должна читаться до текста."""
+    def corner(platform):
+        data = cover.render({"title": "Т", "decision": "URGENT",
+                             "platforms": [platform]})
+        return open_cover(data).convert("RGB").getpixel((5, 5))
+
+    assert corner("WILDBERRIES") != corner("OZON")
+
+
+def test_photo_shows_through_at_the_top():
+    """Затемнение по всей высоте съедало фотографию целиком — оставалась
+    почти чёрная картинка, ради которой незачем было её скачивать."""
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (1600, 900), (235, 235, 245)).save(buffer, "JPEG")
+
+    rendered = open_cover(cover.render(
+        {"title": "Заголовок", "decision": "QUEUE", "platforms": ["OZON"]},
+        buffer.getvalue())).convert("RGB")
+
+    assert min(rendered.getpixel((540, 60))) > 170       # верх — светлый
+    assert max(rendered.getpixel((540, 1310))) < 90      # низ — тёмный
+
+
+def test_broken_photo_falls_back_to_the_plain_cover():
+    """Битая картинка не повод остаться без обложки."""
+    assert cover.render({"title": "Заголовок", "decision": "QUEUE"},
+                        b"\x00\x01not an image") is not None
+
+
+def test_og_image_is_found_in_both_attribute_orders():
+    assert cover.og_image_url(
+        '<meta property="og:image" content="https://x.invalid/a.jpg">'
+    ) == "https://x.invalid/a.jpg"
+    assert cover.og_image_url(
+        '<meta content="https://x.invalid/b.jpg" property="og:image">'
+    ) == "https://x.invalid/b.jpg"
+
+
+def test_relative_og_image_is_resolved_against_the_page():
+    assert cover.og_image_url(
+        '<meta property="og:image" content="/img/a.jpg">',
+        "https://site.invalid/news/1") == "https://site.invalid/img/a.jpg"
+
+
+def test_protocol_relative_og_image_gets_https():
+    assert cover.og_image_url(
+        '<meta property="og:image" content="//cdn.invalid/a.jpg">'
+    ) == "https://cdn.invalid/a.jpg"
+
+
+def test_page_without_og_image_yields_nothing():
+    assert cover.og_image_url("<html><body>без картинки</body></html>") == ""
+
+
+def test_article_photo_never_raises():
+    """Обложка не стоит того, чтобы из-за неё не ушёл пост."""
+    class Broken:
+        def get(self, url, etag=None, last_modified=None):
+            raise RuntimeError("источник лёг")
+
+    assert cover.article_photo("https://x.invalid/a", Broken()) == b""
 
 
 def test_unknown_band_does_not_crash():

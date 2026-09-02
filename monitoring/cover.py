@@ -1,8 +1,13 @@
-"""Обложка к карточке: заголовок на фирменном фоне.
+"""Обложка к посту: фото источника с крупным заголовком поверх.
 
-Генерируется локально через Pillow — бесплатно, предсказуемо, без обращений
-к внешним сервисам. Цвет фона зависит от полосы очереди, так что срочное
-видно раньше, чем прочитан текст.
+Собирается локально через Pillow — бесплатно, предсказуемо, без обращений
+к генераторам картинок. Фон берётся из самой статьи (og:image): это честно
+(снимок относится к событию), бесплатно и всегда по теме. Нарисованная
+моделью «фотография склада» выглядела бы так же, но обозначала бы событие,
+которого не было.
+
+Нет фото — остаётся фирменная плашка с градиентом по цвету площадки.
+Пост уходит в любом случае: обложка украшает, а не решает.
 
 Шрифт лежит в репозитории намеренно: в контейнере Амверы Linux, шрифтов
 Windows там нет. Взят DejaVu Sans — полная кириллица и лицензия, прямо
@@ -10,26 +15,52 @@ Windows там нет. Взят DejaVu Sans — полная кириллица 
 и Segoe UI, которые в публичный репозиторий класть нельзя.
 """
 import io
+import re
 from pathlib import Path
 
-WIDTH, HEIGHT = 1280, 720
-MARGIN = 90
+# 4:5 — вертикаль, которую Телеграм показывает крупнее всего в ленте.
+WIDTH, HEIGHT = 1080, 1350
+MARGIN = 72
 
 FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
 # Порядок поиска: сначала положенное в репозиторий, потом системные пути.
-# Debian кладёт DejaVu именно так, и в образе Амверы он может уже быть.
 FONT_CANDIDATES = [
     (FONTS_DIR / "DejaVuSans-Bold.ttf", FONTS_DIR / "DejaVuSans.ttf"),
     (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
      Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")),
     (Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
      Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf")),
-    (Path("/usr/share/fonts/truetype/freefont/FreeSansBold.ttf"),
-     Path("/usr/share/fonts/truetype/freefont/FreeSans.ttf")),
 ]
 
 _CACHED = None
+
+# Цвет плашки — по площадке, чтобы принадлежность читалась до текста.
+PLATFORM_STYLE = {
+    "WILDBERRIES": {"accent": (203, 17, 171), "label": "WILDBERRIES"},
+    "OZON": {"accent": (0, 91, 255), "label": "OZON"},
+    "YANDEX_MARKET": {"accent": (255, 204, 0), "label": "ЯНДЕКС МАРКЕТ"},
+    "CROSS_PLATFORM": {"accent": (99, 102, 241), "label": "МАРКЕТПЛЕЙСЫ"},
+}
+DEFAULT_PLATFORM = PLATFORM_STYLE["CROSS_PLATFORM"]
+
+# Надпись на плашке — по полосе очереди, а не по содержанию: додумывать
+# «срочно» там, где его нет, значит обещать читателю то, чего в посте нет.
+BAND_LABEL = {
+    "URGENT": "СРОЧНО",
+    "QUEUE": "ВАЖНО",
+    "BACKLOG": "К СВЕДЕНИЮ",
+    "DROP": "К СВЕДЕНИЮ",
+}
+
+BRAND = "Карта мониторинга"
+
+_OG_IMAGE = re.compile(
+    r"""<meta[^>]+(?:property|name)\s*=\s*["'](?:og:image|twitter:image)["']"""
+    r"""[^>]*content\s*=\s*["']([^"']+)["']""", re.I)
+_OG_IMAGE_REVERSED = re.compile(
+    r"""<meta[^>]+content\s*=\s*["']([^"']+)["'][^>]*"""
+    r"""(?:property|name)\s*=\s*["'](?:og:image|twitter:image)["']""", re.I)
 
 
 def _renders_cyrillic(path) -> bool:
@@ -69,32 +100,90 @@ def find_fonts():
     _CACHED = ()
     return None
 
-# Полоса очереди задаёт цвет: срочное видно до того, как прочитан текст.
-BAND_STYLE = {
-    "URGENT":  {"top": (127, 29, 29),  "bottom": (24, 24, 27), "accent": (248, 113, 113),
-                "label": "СРОЧНО"},
-    "QUEUE":   {"top": (120, 83, 12),  "bottom": (24, 24, 27), "accent": (250, 204, 21),
-                "label": "В РАБОТУ"},
-    "BACKLOG": {"top": (30, 58, 95),   "bottom": (24, 24, 27), "accent": (96, 165, 250),
-                "label": "В ЗАПАС"},
-    "DROP":    {"top": (39, 39, 42),   "bottom": (24, 24, 27), "accent": (113, 113, 122),
-                "label": "ОТБРОШЕНО"},
-}
-DEFAULT_STYLE = BAND_STYLE["BACKLOG"]
-
-BRAND = "Карта мониторинга"
-
 
 def fonts_available() -> bool:
     return find_fonts() is not None
 
 
-def _gradient(draw, width, height, top, bottom):
-    for y in range(height):
-        t = y / height
-        draw.line(
-            [(0, y), (width, y)],
-            fill=tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3)))
+# --- фон из статьи ----------------------------------------------------------
+
+def og_image_url(html: str, page_url: str = "") -> str:
+    """Адрес картинки-превью статьи. Пустая строка, если её нет."""
+    for pattern in (_OG_IMAGE, _OG_IMAGE_REVERSED):
+        found = pattern.search(html or "")
+        if not found:
+            continue
+        url = found.group(1).strip()
+        if url.startswith("//"):
+            return "https:" + url
+        if url.startswith("/") and page_url:
+            root = "/".join(page_url.split("/", 3)[:3])
+            return root + url
+        if url.startswith("http"):
+            return url
+    return ""
+
+
+def article_photo(url: str, fetcher) -> bytes:
+    """Картинка-превью статьи или пусто. Никогда не бросает.
+
+    Обложка не стоит того, чтобы из-за неё не ушёл пост, поэтому любая
+    осечка здесь — это просто отсутствие фона, а не ошибка.
+    """
+    try:
+        page = fetcher.get(url)
+        if page.status != 200 or not page.text:
+            return b""
+        image_url = og_image_url(page.text, url)
+        return fetcher.get_bytes(image_url) if image_url else b""
+    except Exception:
+        return b""
+
+
+# --- рисование --------------------------------------------------------------
+
+def _fill(image, width: int, height: int):
+    """Кадрирует по центру под нужное соотношение, без полей и растяжения."""
+    from PIL import Image
+
+    scale = max(width / image.width, height / image.height)
+    resized = image.resize((max(1, round(image.width * scale)),
+                            max(1, round(image.height * scale))),
+                           Image.LANCZOS)
+    left = (resized.width - width) // 2
+    top = (resized.height - height) // 2
+    return resized.crop((left, top, left + width, top + height))
+
+
+def _scrim(image):
+    """Затемнение снизу под заголовок.
+
+    Плотное по всей высоте съедало фотографию целиком — оставалась почти
+    чёрная картинка, ради которой незачем было её и скачивать. Верх остаётся
+    почти чистым, темнеет только низ, где лежит текст.
+    """
+    from PIL import Image
+
+    overlay = Image.new("L", (1, HEIGHT))
+    for y in range(HEIGHT):
+        position = y / HEIGHT
+        if position < 0.42:
+            alpha = int(70 * (position / 0.42) ** 2)
+        else:
+            # Ниже 42% высоты — разгон до почти непрозрачного к самому низу.
+            alpha = 70 + int(175 * ((position - 0.42) / 0.58) ** 1.4)
+        overlay.putpixel((0, y), min(245, alpha))
+    mask = overlay.resize((WIDTH, HEIGHT))
+    dark = Image.new("RGB", (WIDTH, HEIGHT), (8, 8, 12))
+    return Image.composite(dark, image, mask)
+
+
+def _gradient(draw, top, bottom):
+    for y in range(HEIGHT):
+        t = y / HEIGHT
+        draw.line([(0, y), (WIDTH, y)],
+                  fill=tuple(int(top[i] + (bottom[i] - top[i]) * t)
+                             for i in range(3)))
 
 
 def _wrap(draw, text, font, max_width):
@@ -111,11 +200,23 @@ def _wrap(draw, text, font, max_width):
     return lines
 
 
-def render(hit: dict):
+def _badge(draw, xy, text, font, accent):
+    """Плашка с текстом. Возвращает её высоту."""
+    x, y = xy
+    pad_x, pad_y = 26, 14
+    width = draw.textlength(text, font=font)
+    height = font.size + pad_y * 2
+    draw.rounded_rectangle([x, y, x + width + pad_x * 2, y + height],
+                           radius=height // 2, fill=accent)
+    draw.text((x + pad_x, y + pad_y - 2), text, font=font, fill=(255, 255, 255))
+    return height
+
+
+def render(hit: dict, photo: bytes = None):
     """Обложка в PNG или None, если подходящего шрифта нет.
 
     None вместо исключения намеренно: отсутствие шрифта не повод не доставить
-    находку — карточка уйдёт текстом.
+    находку — она уйдёт текстом.
     """
     from PIL import Image, ImageDraw, ImageFont
 
@@ -124,46 +225,60 @@ def render(hit: dict):
         return None
     font_bold, font_regular = found
 
-    style = BAND_STYLE.get(hit.get("decision"), DEFAULT_STYLE)
-    image = Image.new("RGB", (WIDTH, HEIGHT), style["bottom"])
-    draw = ImageDraw.Draw(image)
-    _gradient(draw, WIDTH, HEIGHT, style["top"], style["bottom"])
+    platforms = hit.get("platforms") or []
+    style = PLATFORM_STYLE.get(platforms[0] if platforms else "",
+                               DEFAULT_PLATFORM)
+    accent = style["accent"]
 
-    title_font = ImageFont.truetype(str(font_bold), 62)
-    label_font = ImageFont.truetype(str(font_bold), 30)
-    small_font = ImageFont.truetype(str(font_regular), 26)
+    canvas = None
+    if photo:
+        try:
+            canvas = _scrim(_fill(Image.open(io.BytesIO(photo)).convert("RGB"),
+                                  WIDTH, HEIGHT))
+        except Exception:
+            canvas = None
 
-    # Плашка полосы и баллы
-    label = f"{style['label']} · {hit.get('score', '?')}"
-    draw.rectangle([MARGIN, MARGIN, MARGIN + 14, MARGIN + 44],
-                   fill=style["accent"])
-    draw.text((MARGIN + 34, MARGIN + 4), label, font=label_font,
-              fill=style["accent"])
+    if canvas is None:
+        canvas = Image.new("RGB", (WIDTH, HEIGHT), (16, 16, 20))
+        _gradient(ImageDraw.Draw(canvas),
+                  tuple(max(0, c - 60) for c in accent), (16, 16, 20))
 
-    # Заголовок: кегль уменьшается, пока не влезет в пять строк
-    title = hit.get("title", "без заголовка")
-    for size in (62, 54, 46, 40, 34):
+    draw = ImageDraw.Draw(canvas)
+    label_font = ImageFont.truetype(str(font_bold), 34)
+    small_font = ImageFont.truetype(str(font_regular), 30)
+
+    # Заголовок: кегль уменьшается, пока не влезет в шесть строк.
+    title = (hit.get("title") or "без заголовка").upper()
+    for size in (84, 74, 64, 56, 48, 42):
         title_font = ImageFont.truetype(str(font_bold), size)
-        lines = _wrap(draw, title, title_font, WIDTH - MARGIN * 2)
-        if len(lines) <= 5:
+        lines = _wrap(draw, title, title_font, WIDTH - MARGIN * 2)[:6]
+        if len(lines) <= 6:
             break
-    lines = lines[:5]
 
-    y = MARGIN + 130
+    # Блок текста прижат к низу: сверху остаётся фотография, а не заливка.
+    line_height = int(title_font.size * 1.16)
+    footer = MARGIN + small_font.size + 62
+    y = HEIGHT - footer - len(lines) * line_height
+
+    _badge(draw, (MARGIN, y - 78),
+           BAND_LABEL.get(hit.get("decision"), "К СВЕДЕНИЮ"),
+           label_font, accent)
+
     for line in lines:
-        draw.text((MARGIN, y), line, font=title_font, fill=(244, 244, 245))
-        y += int(title_font.size * 1.28)
+        draw.text((MARGIN, y), line, font=title_font, fill=(255, 255, 255))
+        y += line_height
 
-    draw.line([(MARGIN, HEIGHT - 118), (WIDTH - MARGIN, HEIGHT - 118)],
-              fill=(63, 63, 70), width=2)
-    draw.text((MARGIN, HEIGHT - 96), BRAND, font=small_font, fill=(161, 161, 170))
+    # Подпись внизу: площадка слева, источник справа.
+    baseline = HEIGHT - MARGIN - small_font.size
+    draw.rectangle([MARGIN, baseline + 4, MARGIN + 8, baseline + small_font.size],
+                   fill=accent)
+    draw.text((MARGIN + 26, baseline), style["label"], font=small_font,
+              fill=(255, 255, 255))
 
-    platforms = ", ".join(hit.get("platforms") or [])
-    if platforms:
-        width = draw.textlength(platforms, font=small_font)
-        draw.text((WIDTH - MARGIN - width, HEIGHT - 96), platforms,
-                  font=small_font, fill=(161, 161, 170))
+    width = draw.textlength(BRAND, font=small_font)
+    draw.text((WIDTH - MARGIN - width, baseline), BRAND, font=small_font,
+              fill=(190, 190, 200))
 
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
+    canvas.save(buffer, format="JPEG", quality=88, optimize=True)
     return buffer.getvalue()

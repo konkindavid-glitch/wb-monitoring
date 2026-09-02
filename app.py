@@ -262,12 +262,20 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
     return report
 
 
-def render_cover(hit: dict):
-    """Обложка или None. Ни отсутствие шрифта, ни отсутствие Pillow
-    не должны отменять доставку находки — текст важнее картинки."""
+def render_cover(hit: dict, fetcher=None):
+    """Обложка или None.
+
+    Фон берётся из самой статьи (og:image): снимок относится к событию,
+    он бесплатен и всегда по теме. Не отдался — остаётся фирменная плашка.
+    Ни отсутствие шрифта, ни отсутствие Pillow, ни отсутствие картинки
+    не отменяют доставку: текст важнее обложки.
+    """
     try:
-        from monitoring.cover import render
-        return render(hit)
+        from monitoring.cover import article_photo, render
+        photo = b""
+        if fetcher is not None and hit.get("url"):
+            photo = article_photo(hit["url"], fetcher)
+        return render(hit, photo)
     except ImportError:
         print("[degraded] Pillow не установлен — карточки уходят без обложки")
     except Exception as exc:
@@ -282,7 +290,7 @@ def deliver_card(hit: dict, deps, is_test: bool = False) -> bool:
         return True
     message_id = send_card(
         format_card(hit, is_test=is_test), deps.token, deps.chat_id,
-        cover=render_cover(hit),
+        cover=render_cover(hit, deps.fetcher),
         reply_markup=keyboard(hit.get("hit_id", "hit_sample")))
     return message_id is not None
 
@@ -356,7 +364,8 @@ def publish_hit(hit_id: str, deps):
 
     channel = os.getenv("TELEGRAM_CHANNEL_ID", "")
     target = channel or deps.chat_id
-    message_id = send_card(text, deps.token, target, cover=render_cover(hit))
+    message_id = send_card(text, deps.token, target,
+                           cover=render_cover(hit, deps.fetcher))
     if message_id is None:
         from monitoring.delivery import last_error
         # Словами Телеграма: «bot is not a member of the channel chat»

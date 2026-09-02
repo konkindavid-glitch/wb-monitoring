@@ -67,5 +67,21 @@ class Fetcher:
                                response.headers.get("Last-Modified"))
         return FetchResult(0)
 
+    def get_bytes(self, url: str, limit: int = 8_000_000) -> bytes:
+        """Двоичное тело — для картинок к постам.
+
+        Отдельно от get, потому что там response.text: картинку он превратит
+        в мусор. Повторов нет намеренно: не пришла картинка — пост уйдёт
+        с запасной обложкой, а тратить на неё три подхода незачем.
+        """
+        try:
+            response = self._client.get(url)
+        except httpx.HTTPError:
+            return b""
+        if response.status_code != 200:
+            return b""
+        content = response.content
+        return content if len(content) <= limit else b""
+
     def close(self) -> None:
         self._client.close()

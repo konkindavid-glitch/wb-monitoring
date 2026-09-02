@@ -75,7 +75,7 @@ class Telegram:
         monkeypatch.setattr(app, "delete_message", self.delete_message)
         monkeypatch.setattr(app, "answer_callback",
                             lambda *a, **k: self.answered.append(a) or True)
-        monkeypatch.setattr(app, "render_cover", lambda hit: b"png")
+        monkeypatch.setattr(app, "render_cover", lambda hit, fetcher=None: b"jpeg")
         if env_channel is None:
             monkeypatch.delenv("TELEGRAM_CHANNEL_ID", raising=False)
         else:

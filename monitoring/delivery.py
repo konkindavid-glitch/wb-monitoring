@@ -196,12 +196,12 @@ def send_card(text: str, token: str, chat_id: str, *,
         if markup:
             payload["reply_markup"] = markup
         result = _call(PHOTO_API.format(token=token), payload,
-                       files={"photo": ("cover.png", cover, "image/png")})
+                       files={"photo": ("cover.jpg", cover, "image/jpeg")})
         return result.get("message_id") if result else None
 
     if cover:
         _call(PHOTO_API.format(token=token), {"chat_id": chat_id},
-              files={"photo": ("cover.png", cover, "image/png")})
+              files={"photo": ("cover.jpg", cover, "image/jpeg")})
 
     payload = {"chat_id": chat_id, "text": text,
                "disable_web_page_preview": True}
