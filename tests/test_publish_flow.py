@@ -406,18 +406,35 @@ def test_finding_without_a_post_is_still_reported(monkeypatch):
     assert repo.saved_post is None
 
 
-def test_cover_goes_separately_from_the_text(monkeypatch):
-    """Подпись к фото ограничена 1024 знаками против 4096 у сообщения:
-    вёрстка менялась бы в зависимости от длины поста."""
+def test_short_post_goes_as_one_message_with_the_picture(monkeypatch):
+    """Картинка и текст должны быть одним постом — то есть фото с подписью."""
     from monitoring import delivery
 
     calls = []
     monkeypatch.setattr(delivery, "_call",
                         lambda url, payload, files=None: calls.append(
-                            (delivery._method(url), files is not None))
+                            (delivery._method(url), payload, files is not None))
                         or {"message_id": 1})
 
-    delivery.send_card("текст поста", "T", "100", cover=b"jpeg",
+    delivery.send_card("короткий пост", "T", "100", cover=b"jpeg",
                        reply_markup={"inline_keyboard": []})
 
-    assert calls == [("sendPhoto", True), ("sendMessage", False)]
+    assert [c[0] for c in calls] == ["sendPhoto"]
+    assert calls[0][1]["caption"] == "короткий пост"
+    assert "reply_markup" in calls[0][1]
+
+
+def test_overlong_post_splits_and_says_why(monkeypatch, capsys):
+    """Резать пост ради вёрстки нельзя — читатель потеряет конец."""
+    from monitoring import delivery
+
+    calls = []
+    monkeypatch.setattr(delivery, "_call",
+                        lambda url, payload, files=None: calls.append(
+                            delivery._method(url)) or {"message_id": 1})
+
+    long_text = "я" * (delivery.CAPTION_LIMIT + 1)
+    delivery.send_card(long_text, "T", "100", cover=b"jpeg")
+
+    assert calls == ["sendPhoto", "sendMessage"]
+    assert "не влезает" in capsys.readouterr().out

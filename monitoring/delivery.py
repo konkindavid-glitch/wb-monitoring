@@ -175,20 +175,36 @@ def _call(url: str, payload: dict, files: dict = None):
 
 def send_card(text: str, token: str, chat_id: str, *,
               cover: bytes = None, reply_markup: dict = None):
-    """Обложка отдельным сообщением, следом текст. Возвращает message_id текста.
+    """Картинка и текст одним постом. Возвращает message_id или None.
 
-    Подписью к фото текст не идёт намеренно. Подпись ограничена 1024 знаками
-    против 4096 у сообщения, и пост, который в неё не влез, пришлось бы резать
-    или верстать двумя разными способами в зависимости от длины — читатель
-    видел бы то так, то эдак. Отдельные сообщения выглядят одинаково всегда.
+    Одним сообщением — то есть фото с подписью. Подпись ограничена 1024
+    знаками против 4096 у обычного сообщения, и это предел Телеграма,
+    обойти его нельзя: длинный текст физически не помещается в подпись.
 
-    Кнопки — на сообщении с текстом: решение принимается по тексту, а не
-    по картинке.
+    Поэтому текст длиннее предела уходит по-старому, двумя сообщениями:
+    резать пост ради вёрстки нельзя — читатель потеряет конец. Такой случай
+    называется в логе, чтобы расхождение с ожидаемым видом не пришлось
+    выяснять по скриншотам.
+
+    Кнопки ставятся на то сообщение, где лежит текст: решение принимается
+    по тексту, а не по картинке.
     """
     if not token or not chat_id:
         return None
 
+    markup = json.dumps(reply_markup) if reply_markup else None
+
+    if cover and len(text) <= CAPTION_LIMIT:
+        payload = {"chat_id": chat_id, "caption": text}
+        if markup:
+            payload["reply_markup"] = markup
+        result = _call(PHOTO_API.format(token=token), payload,
+                       files={"photo": ("cover.jpg", cover, "image/jpeg")})
+        return result.get("message_id") if result else None
+
     if cover:
+        print(f"[delivery] {len(text)} знаков — в подпись к фото "
+              f"({CAPTION_LIMIT}) не влезает, картинка уходит отдельно")
         _call(PHOTO_API.format(token=token), {"chat_id": chat_id},
               files={"photo": ("cover.jpg", cover, "image/jpeg")})
 

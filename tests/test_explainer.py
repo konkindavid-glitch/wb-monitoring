@@ -117,11 +117,15 @@ def test_missing_model_is_reported():
     assert "ключа модели" in result.reason
 
 
-def test_explainer_fits_a_telegram_message():
+def test_explainer_fits_a_photo_caption():
+    """Разбор уходит одним постом — картинкой с подписью, — а подпись
+    Телеграм ограничивает 1024 знаками."""
+    from monitoring.delivery import CAPTION_LIMIT
     from monitoring.explainer import MAX_LENGTH
+
     client = Client("я" * 9000)
     result = write_explainer("GTIN", gather_sources(MATERIALS), client)
-    assert len(result.text) <= MAX_LENGTH == 4096
+    assert len(result.text) <= MAX_LENGTH == CAPTION_LIMIT == 1024
 
 
 # --- частота попыток --------------------------------------------------------
