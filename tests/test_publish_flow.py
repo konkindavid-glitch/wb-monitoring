@@ -332,3 +332,18 @@ def test_group_chats_are_not_mistaken_for_channels(monkeypatch):
 
     app.handle_channel_post(channel_post(chat_type="supergroup"), make_deps())
     assert notes.sent == []
+
+
+def test_refusal_reason_reaches_the_editor(monkeypatch):
+    """«bot is not a member of the channel chat» говорит, что делать,
+    а «Телеграм не принял» — нет."""
+    tg = Telegram()
+    tg.install(monkeypatch, env_channel="-1001234")
+    monkeypatch.setattr(app, "send_card", lambda *a, **k: None)
+    monkeypatch.setattr("monitoring.delivery.last_error",
+                        lambda: "Forbidden: bot is not a member of the channel chat")
+
+    app.handle_callback(press(PUBLISH), make_deps())
+
+    assert "not a member of the channel" in tg.edits[-1]["text"]
+    assert tg.edits[-1]["reply_markup"] is not None

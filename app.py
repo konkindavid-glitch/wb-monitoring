@@ -358,7 +358,10 @@ def publish_hit(hit_id: str, deps):
     target = channel or deps.chat_id
     message_id = send_card(text, deps.token, target, cover=render_cover(hit))
     if message_id is None:
-        return False, f"Телеграм не принял пост в {target}"
+        from monitoring.delivery import last_error
+        # Словами Телеграма: «bot is not a member of the channel chat»
+        # говорит, что делать, а «не принял» — нет.
+        return False, f"Телеграм не принял пост в {target}: {last_error()}"
     if channel:
         return True, "✅ Опубликовано в канале"
     return True, ("✅ Пост готов и отправлен сюда — канал не задан, "

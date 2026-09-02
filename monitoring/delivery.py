@@ -87,6 +87,15 @@ CAPTION_LIMIT = 1024
 _CLIENTS = {}
 _WORKING = None
 
+# Последняя жалоба Телеграма. Нужна, чтобы редактор в чате видел причину
+# словами Телеграма, а не «не принял»: «bot is not a member of the channel
+# chat» говорит, что делать, а «не принял» — нет.
+_LAST_ERROR = {"text": ""}
+
+
+def last_error() -> str:
+    return _LAST_ERROR["text"]
+
 
 def _client(ipv4: bool):
     if ipv4 not in _CLIENTS:
@@ -98,11 +107,16 @@ def _client(ipv4: bool):
 def _post(url: str, **kwargs):
     """Единственная точка выхода в сеть. Пробует оба пути, помнит рабочий.
 
-    Жёсткая привязка к IPv4 была ошибкой: в этом контейнере IPv4-адресов нет
-    вовсе, и запрос стал падать раньше, чем раньше. Но и обычный клиент здесь
-    не работает — уходит в родной IPv6 Телеграма, куда нет маршрута.
-    Какой из путей оживёт первым, зависит от того, что починят на стороне
-    площадки, поэтому пробуются оба, а удачный запоминается.
+    Контейнер переезжает между узлами, и сеть на них разная. На одном узле
+    у контейнера был IPv6-адрес без маршрута наружу: обычный клиент выбирал
+    IPv6 Телеграма и падал с ENETUNREACH. На другом IPv6 нет вовсе, и обычный
+    клиент прекрасно работает по IPv4. Жёсткая привязка к IPv4 не спасала —
+    на первом узле она отсекала резолвинг вовсе (EAI_FAMILY).
+
+    Поэтому не выбор семейства, а перебор: сначала обычный клиент, при сетевом
+    отказе — привязанный к IPv4. Удачный запоминается, чтобы не платить
+    двойной задержкой за каждый запрос, и сбрасывается, если перестал
+    работать: тогда после переезда бот оживает сам, без пересборки.
 
     Через эту же функцию тесты подменяют сеть: подменять httpx.post целиком
     значило бы трогать и коллекторы, которым всё это не нужно.
@@ -118,7 +132,11 @@ def _post(url: str, **kwargs):
             continue
         if _WORKING is None:
             _WORKING = ipv4
-            print(f"[net] Телеграм отвечает по {'IPv4' if ipv4 else 'IPv6'}")
+            # Именно «клиент», а не семейство адресов: обычный клиент выбирает
+            # семейство сам, и назвать его IPv6 значило бы соврать в логе —
+            # ровно та беда, из-за которой этот модуль и переписывался.
+            print("[net] Телеграм отвечает: клиент "
+                  + ("с привязкой к IPv4" if ipv4 else "обычный"))
         return response
     _WORKING = None
     raise last
@@ -142,17 +160,22 @@ def _call(url: str, payload: dict, files: dict = None):
                          json=None if files else payload, files=files)
         body = response.json()
     except httpx.HTTPError as exc:
+        _LAST_ERROR["text"] = f"сеть — {exc}"
         print(f"[telegram] {method}: сеть — {exc}")
         return None
     except ValueError:
+        _LAST_ERROR["text"] = "ответ Телеграма не разобрался"
         print(f"[telegram] {method}: ответ не разобрался "
               f"(код {response.status_code})")
         return None
 
     if not body.get("ok"):
+        _LAST_ERROR["text"] = str(body.get("description") or
+                                  body.get("error_code"))
         print(f"[telegram] {method}: {body.get('error_code')} "
               f"{body.get('description')}")
         return None
+    _LAST_ERROR["text"] = ""
     return body.get("result")
 
 
