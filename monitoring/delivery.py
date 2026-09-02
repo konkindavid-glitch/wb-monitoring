@@ -136,16 +136,22 @@ def answer_callback(callback_id: str, token: str, text: str = None) -> bool:
 
 
 def replace_text(message_id: int, text: str, token: str, chat_id: str,
-                 *, has_caption: bool = False) -> bool:
-    """Меняет текст сообщения и убирает кнопки: решение уже принято.
+                 *, has_caption: bool = False, reply_markup: dict = None) -> bool:
+    """Меняет текст сообщения. Без reply_markup кнопки исчезают.
 
     У сообщения с фото правится подпись, у обычного — текст. Перепутать
     нельзя: Телеграм отвечает «there is no text in the message to edit».
+
+    Кнопки убираются по умолчанию намеренно: решение принято, и второе
+    нажатие не должно опубликовать пост дважды. Вернуть их можно явно —
+    это нужно, когда пост не написался и попытку стоит повторить.
     """
     url = EDIT_CAPTION_API if has_caption else EDIT_TEXT_API
     field = "caption" if has_caption else "text"
     payload = {"chat_id": chat_id, "message_id": message_id,
                field: text[:CAPTION_LIMIT if has_caption else TELEGRAM_LIMIT]}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     return _call(url.format(token=token), payload) is not None
 
 

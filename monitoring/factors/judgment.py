@@ -102,16 +102,23 @@ class OpenRouterClient:
         return response.json()["choices"][0]["message"]["content"]
 
 
-def build_client():
+def build_client(model_env: str = "OPENROUTER_MODEL"):
     """Клиент по тому, какой ключ задан. OpenRouter имеет приоритет.
 
     Возвращает None, если ключа нет вовсе — тик в этом случае обязан громко
     сообщить о деградации, а не молча занижать оценки.
+
+    model_env позволяет писать посты не той моделью, что размечает факторы.
+    Haiku выбран для разметки из-за объёма: сотня материалов за прогон.
+    К написанию поста это рассуждение не относится — пост один и редкий,
+    и там уместнее модель посильнее. По умолчанию модель та же: подставлять
+    непроверенный идентификатор и ломать публикацию нельзя.
     """
     if os.getenv("OPENROUTER_API_KEY"):
-        return OpenRouterClient(os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL))
+        model = os.getenv(model_env) or os.getenv("OPENROUTER_MODEL")             or OPENROUTER_MODEL
+        return OpenRouterClient(model)
     if os.getenv("ANTHROPIC_API_KEY"):
-        return AnthropicClient()
+        return AnthropicClient(os.getenv("ANTHROPIC_MODEL", MODEL))
     return None
 
 

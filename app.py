@@ -48,6 +48,7 @@ from monitoring.heartbeat import build_report, map_hits_to_questions
 from monitoring.post import format_card, sample_card
 from monitoring.scoring import score_item
 from monitoring.topics import build_matchers, classify, detect_platform
+from monitoring.writer import article_text, write_post
 
 ROOT = Path(__file__).resolve().parent
 POLL_SECONDS = 60
@@ -65,6 +66,7 @@ class Deps:
     fetcher: object = None
     repo: object = None
     judge: object = None
+    writer: object = None
     store: object = None
     sources: list = None
     sender: object = send
@@ -315,6 +317,53 @@ def write_offset(value: int) -> None:
         print(f"[degraded] смещение обновлений не сохранено: {exc}")
 
 
+def resolve_hit(hit_id: str, deps):
+    """Находка по идентификатору. Эталонной в базе нет — она задана в коде."""
+    if hit_id == "hit_sample":
+        return sample_card()
+    if deps.repo is None:
+        return None
+    try:
+        return deps.repo.hit_by_id(hit_id)
+    except Exception as exc:
+        print(f"[fail] находка {hit_id} не прочитана: {exc}")
+        if hasattr(deps.repo, "rollback"):
+            deps.repo.rollback()
+        return None
+
+
+def publish_hit(hit_id: str, deps):
+    """Пишет пост по находке и публикует. Возвращает (получилось, что сказать).
+
+    Пост уходит в канал из TELEGRAM_CHANNEL_ID, а если канал не задан —
+    в тот же чат модерации. Молчаливое «никуда» недопустимо: редактор нажал
+    кнопку и обязан увидеть результат.
+    """
+    hit = resolve_hit(hit_id, deps)
+    if hit is None:
+        return False, "находка не найдена в базе"
+
+    url = hit.get("url") or ""
+    source = article_text(url, deps.fetcher) if url else ""
+    written = write_post(hit, source, deps.writer or deps.judge)
+    if not written:
+        return False, written.reason
+
+    # Ссылка дописывается кодом, а не моделью: единственное место, где её
+    # нельзя переврать.
+    text = f"{written.text}\n\n{url}" if url else written.text
+
+    channel = os.getenv("TELEGRAM_CHANNEL_ID", "")
+    target = channel or deps.chat_id
+    message_id = send_card(text, deps.token, target, cover=render_cover(hit))
+    if message_id is None:
+        return False, f"Телеграм не принял пост в {target}"
+    if channel:
+        return True, "✅ Опубликовано в канале"
+    return True, ("✅ Пост готов и отправлен сюда — канал не задан, "
+                  "укажите TELEGRAM_CHANNEL_ID для публикации")
+
+
 def handle_callback(query: dict, deps) -> None:
     """Нажатие кнопки под карточкой."""
     parsed = parse_callback(query.get("data", ""))
@@ -330,30 +379,73 @@ def handle_callback(query: dict, deps) -> None:
     # секунды, а редактор всё это время смотрит на крутилку.
     answer_callback(query.get("id", ""), deps.token, OUTCOME_TOAST.get(action))
 
+    # Карточка берётся из самого сообщения: перечитывать базу незачем,
+    # а для эталонной карточки её там и нет.
+    card = message.get("caption") or message.get("text") or ""
+    has_caption = "caption" in message
+
     prompt_message_id = None
     if action == EDIT:
         prompt_message_id = send_prompt(chat_id, deps)
 
+    record_decision(hit_id, action, chat_id, message_id, prompt_message_id,
+                    editor, deps)
+
+    if action == REJECT:
+        set_state(hit_id, STATE_AFTER[REJECT], deps)
+        delete_message(message_id, deps.token, chat_id)
+        print(f"[moderation] {action} · {hit_id}")
+        return
+
+    if action == EDIT:
+        replace_text(message_id, outcome_text(action, card), deps.token,
+                     chat_id, has_caption=has_caption)
+        print(f"[moderation] {action} · {hit_id}")
+        return
+
+    # Написание поста занимает секунды: сначала убираются кнопки, чтобы
+    # второе нажатие не опубликовало пост дважды, и показывается, что идёт
+    # работа, — иначе нажатие выглядит как «ничего не произошло».
+    replace_text(message_id, outcome_text(action, card, "⏳ Пишу пост…"),
+                 deps.token, chat_id, has_caption=has_caption)
+
+    ok, note = publish_hit(hit_id, deps)
+    if ok:
+        set_state(hit_id, STATE_AFTER[PUBLISH], deps)
+        replace_text(message_id, outcome_text(action, card, note),
+                     deps.token, chat_id, has_caption=has_caption)
+    else:
+        # Кнопки возвращаются: причина сбоя устранима — источник ответит,
+        # ключ пополнится, — и попытку надо дать повторить.
+        replace_text(message_id,
+                     outcome_text(action, card, f"⚠️ Пост не написан: {note}"),
+                     deps.token, chat_id, has_caption=has_caption,
+                     reply_markup=keyboard(hit_id))
+    print(f"[moderation] {action} · {hit_id} · {note}")
+
+
+def record_decision(hit_id, action, chat_id, message_id, prompt_message_id,
+                    editor, deps) -> None:
+    if deps.repo is None:
+        return
     try:
         deps.repo.save_decision(hit_id, action, chat_id, message_id,
                                 prompt_message_id, editor)
-        if action in STATE_AFTER:
-            deps.repo.set_hit_state(hit_id, STATE_AFTER[action])
     except Exception as exc:
         print(f"[fail] решение не записано: {exc}")
         if hasattr(deps.repo, "rollback"):
             deps.repo.rollback()
 
-    if action == REJECT:
-        delete_message(message_id, deps.token, chat_id)
-    else:
-        # Карточка берётся из самого сообщения: перечитывать базу незачем,
-        # а для эталонной карточки её там и нет.
-        card = message.get("caption") or message.get("text") or ""
-        replace_text(message_id, outcome_text(action, card), deps.token,
-                     chat_id, has_caption="caption" in message)
 
-    print(f"[moderation] {action} · {hit_id}")
+def set_state(hit_id: str, state: str, deps) -> None:
+    if deps.repo is None:
+        return
+    try:
+        deps.repo.set_hit_state(hit_id, state)
+    except Exception as exc:
+        print(f"[fail] состояние находки не обновлено: {exc}")
+        if hasattr(deps.repo, "rollback"):
+            deps.repo.rollback()
 
 
 def send_prompt(chat_id: str, deps):
@@ -548,6 +640,7 @@ def build_deps(cfg, dry_run: bool) -> Deps:
 
     from monitoring.factors.judgment import build_client
     deps.judge = build_client()
+    deps.writer = build_client("WRITER_MODEL")
 
     return deps
 

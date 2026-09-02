@@ -71,13 +71,14 @@ def parse_callback(data: str):
     return action, hit_id
 
 
-def outcome_text(action: str, card: str) -> str:
+def outcome_text(action: str, card: str, note: str = None) -> str:
     """Текст карточки после решения: итог сверху, карточка под ним.
 
     Карточка сохраняется целиком — по одной строке «отклонено» через неделю
-    невозможно понять, что именно отклонили.
+    невозможно понять, что именно отклонили. note заменяет стандартный итог,
+    когда сказать нужно больше: куда ушёл пост или почему он не написался.
     """
-    return f"{OUTCOME[action]}\n\n{card}"
+    return f"{note or OUTCOME[action]}\n\n{card}"
 
 
 # Короткая подсказка во всплывашке на самой кнопке: редактор видит, что
