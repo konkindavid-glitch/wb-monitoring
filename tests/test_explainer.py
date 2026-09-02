@@ -201,3 +201,27 @@ def test_slow_sources_do_not_consume_the_whole_budget(monkeypatch):
                                           "url": "https://x.invalid/1"}]))
     app.build_explainer(deps, "10:00")
     assert len(fetched) <= 1 + app.EXPLAINER_RELATED
+
+
+def test_hit_without_platforms_asks_the_database_nothing():
+    """Пустой массив площадок в запросе не нужен: ответ заведомо пуст,
+    а приведение типов на пустом массиве — лишний способ ошибиться."""
+    import importlib.util
+
+    import pytest
+    if importlib.util.find_spec("psycopg") is None:
+        pytest.skip("psycopg локально не установлен")
+
+    class Spy:
+        def __init__(self):
+            self.asked = False
+
+        def cursor(self):
+            self.asked = True
+            raise AssertionError("запрос не должен уходить")
+
+    from monitoring.db import Repo
+    repo = Repo.__new__(Repo)
+    repo.conn = Spy()
+    assert repo.related_hits({"hit_id": "h1", "platforms": []}, 168) == []
+    assert not repo.conn.asked

@@ -1160,7 +1160,10 @@ def main():
                 _EXPLAINER_TRIED[slot] = now
                 run_explainer(deps, slot)
         except Exception as exc:
-            print(f"[fail] разбор: {exc}")
+            # Тег тот же, что у остальных строк выпуска: под отдельным тегом
+            # ошибка не попадалась в поиск по логу и девять минут выглядела
+            # как зависание.
+            print(f"[explainer] сбой выпуска: {exc}")
             if hasattr(deps.repo, "rollback"):
                 deps.repo.rollback()
 

@@ -352,18 +352,26 @@ class Repo:
         Одна новость даёт повод, но не даёт инструкции: официальное
         уведомление говорит, что меняется, а разбор отраслевого издания —
         чем это грозит.
+
+        Приведение к monitoring_platform[] обязательно. Без него Postgres
+        разбирает переданный массив как одиночное значение перечисления
+        и падает на первой же скобке: invalid input value for enum
+        monitoring_platform: "{".
         """
+        platforms = list(hit.get("platforms") or [])
+        if not platforms:
+            return []
+
         with self.conn.cursor() as cur:
             cur.execute(
                 """SELECT hit_id, title, url
                      FROM monitoring_hits
                     WHERE discovered_at > now() - make_interval(hours => %s)
                       AND hit_id <> %s
-                      AND platforms && %s
+                      AND platforms && %s::monitoring_platform[]
                     ORDER BY score DESC
                     LIMIT %s""",
-                (hours, hit.get("hit_id", ""),
-                 list(hit.get("platforms") or []), limit))
+                (hours, hit.get("hit_id", ""), platforms, limit))
             columns = [c.name for c in cur.description]
             return [dict(zip(columns, row)) for row in cur.fetchall()]
 
