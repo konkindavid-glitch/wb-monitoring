@@ -339,6 +339,15 @@ EXPLAINER_WINDOW_HOURS = 168
 # первый выпуск сделал полсотни одинаковых записей в лог за час.
 EXPLAINER_RETRY_MINUTES = 30
 _EXPLAINER_TRIED = {}
+
+# Потолок на сборку разбора. Без него цикл вставал надолго: на каждую тему
+# качается до семи статей, у Fetcher три попытки с нарастающим ожиданием,
+# и пять тем в худшем случае — это полчаса, в течение которых бот не слышит
+# кнопок и не делает тиков. Лучше выпустить разбор по первой подходящей теме,
+# чем перебрать все и замолчать на полчаса.
+EXPLAINER_BUDGET_SECONDS = 180
+EXPLAINER_CANDIDATES = 3
+EXPLAINER_RELATED = 3
 MOSCOW_OFFSET = timedelta(hours=3)
 
 
@@ -386,15 +395,24 @@ def build_explainer(deps, slot: str):
     """
     from monitoring.explainer import gather_sources, write_explainer
 
-    candidates = deps.repo.explainer_candidates(EXPLAINER_WINDOW_HOURS)
+    deadline = time.monotonic() + EXPLAINER_BUDGET_SECONDS
+    candidates = deps.repo.explainer_candidates(EXPLAINER_WINDOW_HOURS,
+                                                EXPLAINER_CANDIDATES)
     if not candidates:
         return None, (f"нет тем: за {EXPLAINER_WINDOW_HOURS} ч не нашлось "
                       f"находок выше порога, о которых ещё не говорили")
 
     print(f"[explainer] тем к рассмотрению: {len(candidates)}")
     for hit in candidates:
+        if time.monotonic() >= deadline:
+            return None, "не уложился в отведённое время"
+
+        related = deps.repo.related_hits(hit, EXPLAINER_WINDOW_HOURS,
+                                         EXPLAINER_RELATED)
         materials = []
-        for source in [hit] + deps.repo.related_hits(hit, EXPLAINER_WINDOW_HOURS):
+        for source in [hit] + related:
+            if time.monotonic() >= deadline:
+                break
             text = article_text(source.get("url") or "", deps.fetcher)
             if text:
                 materials.append({"title": source.get("title", ""),

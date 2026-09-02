@@ -152,3 +152,52 @@ def test_window_is_wide_enough_for_rules_topics():
     """Разбор про правила не протухает за трое суток, а весомых тем
     за такое окно может не набраться вовсе — что и случилось."""
     assert app.EXPLAINER_WINDOW_HOURS >= 168
+
+
+# --- бюджет времени ---------------------------------------------------------
+
+class Repo:
+    def __init__(self, candidates):
+        self.candidates = candidates
+
+    def explainer_candidates(self, hours, limit=5):
+        return self.candidates[:limit]
+
+    def related_hits(self, hit, hours, limit=6):
+        return []
+
+
+def test_assembly_gives_up_instead_of_stalling_the_loop(monkeypatch):
+    """Пока собирается разбор, бот не слышит кнопок и не делает тиков.
+    Пять тем по семь статей с повторами — это полчаса молчания."""
+    monkeypatch.setattr(app, "EXPLAINER_BUDGET_SECONDS", 0)
+    deps = app.Deps(cfg=None, repo=Repo([{"hit_id": "h1", "title": "Т",
+                                          "url": "https://x.invalid/1"}]))
+
+    hit, reason = app.build_explainer(deps, "10:00")
+    assert hit is None
+    assert "время" in reason
+
+
+def test_only_a_few_topics_are_tried():
+    """Перебирать всё найденное дороже, чем выпустить по первой подходящей."""
+    assert app.EXPLAINER_CANDIDATES <= 3
+    assert app.EXPLAINER_RELATED <= 3
+
+
+def test_slow_sources_do_not_consume_the_whole_budget(monkeypatch):
+    """Бюджет проверяется и внутри темы, а не только между темами."""
+    fetched = []
+    monkeypatch.setattr(app, "EXPLAINER_BUDGET_SECONDS", 1)
+    monkeypatch.setattr(app, "article_text",
+                        lambda url, fetcher: fetched.append(url) or "")
+
+    class Slow(Repo):
+        def related_hits(self, hit, hours, limit=6):
+            return [{"hit_id": f"r{i}", "title": "Р",
+                     "url": f"https://x.invalid/r{i}"} for i in range(limit)]
+
+    deps = app.Deps(cfg=None, repo=Slow([{"hit_id": "h1", "title": "Т",
+                                          "url": "https://x.invalid/1"}]))
+    app.build_explainer(deps, "10:00")
+    assert len(fetched) <= 1 + app.EXPLAINER_RELATED
