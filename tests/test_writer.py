@@ -85,3 +85,52 @@ def test_model_failure_is_reported():
 
 def test_source_threshold_is_a_real_guard():
     assert MIN_SOURCE_CHARS >= 200
+
+
+# --- пост обязан влезать в подпись к фото -----------------------------------
+
+def test_overlong_post_is_rewritten_not_chopped():
+    """Просить у модели 900 знаков и не проверять результат — значит
+    не иметь предела вовсе: модель писала 1200, и пост разъезжался
+    на два сообщения."""
+    from monitoring.writer import POST_LIMIT
+
+    long_one = "Тариф меняется с 3 сентября. " * 50
+    client = FakeClient(long_one, "Короткий пост про 3 сентября.")
+
+    result = write_post(HIT, SOURCE, client)
+
+    assert result.text == "Короткий пост про 3 сентября."
+    assert "занял" in client.prompts[1]
+    assert str(POST_LIMIT) in client.prompts[1]
+
+
+def test_post_that_stays_long_is_cut_on_a_sentence_boundary():
+    """Тупая обрезка рвёт слово пополам и оставляет пост без концовки."""
+    from monitoring.delivery import CAPTION_LIMIT
+    from monitoring.writer import POST_LIMIT
+
+    long_one = "Тариф меняется с 3 сентября. " * 50
+    result = write_post(HIT, SOURCE, FakeClient(long_one, long_one))
+
+    assert len(result.text) <= POST_LIMIT == CAPTION_LIMIT
+    assert result.text.endswith(".")
+
+
+def test_short_post_is_untouched():
+    text = "Wildberries меняет тариф хранения с 3 сентября."
+    assert write_post(HIT, SOURCE, FakeClient(text)).text == text
+
+
+def test_fit_keeps_whole_sentences():
+    from monitoring.writer import fit
+
+    text = "Первое предложение. " * 100
+    cut = fit(text, 200)
+    assert len(cut) <= 200
+    assert cut.endswith("предложение.")
+
+
+def test_fit_leaves_short_text_alone():
+    from monitoring.writer import fit
+    assert fit("коротко", 200) == "коротко"

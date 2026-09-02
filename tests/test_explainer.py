@@ -117,15 +117,30 @@ def test_missing_model_is_reported():
     assert "ключа модели" in result.reason
 
 
+def test_overlong_explainer_is_rewritten_not_chopped():
+    """Обрезка по счётчику уносит концовку, а в разборе концовка —
+    это «что нужно сделать», ради чего его и читают."""
+    long_one = "Предложение про правила. " * 60
+    client = Client(long_one, TEXT)
+
+    result = write_explainer("GTIN", gather_sources(MATERIALS), client)
+
+    assert result.text == TEXT
+    assert "занял" in client.prompts[1]
+
+
 def test_explainer_fits_a_photo_caption():
     """Разбор уходит одним постом — картинкой с подписью, — а подпись
     Телеграм ограничивает 1024 знаками."""
     from monitoring.delivery import CAPTION_LIMIT
     from monitoring.explainer import MAX_LENGTH
 
-    client = Client("я" * 9000)
+    long_one = "Предложение про правила. " * 60
+    client = Client(long_one, long_one)
     result = write_explainer("GTIN", gather_sources(MATERIALS), client)
+
     assert len(result.text) <= MAX_LENGTH == CAPTION_LIMIT == 1024
+    assert result.text.endswith(".")
 
 
 # --- частота попыток --------------------------------------------------------

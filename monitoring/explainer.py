@@ -23,7 +23,7 @@
 выдуманный срок или процент в инструкции «что делать» дороже отсутствия
 инструкции. Проверка живёт в monitoring/writer.py и переиспользуется здесь.
 """
-from monitoring.writer import unsupported_numbers
+from monitoring.writer import fit, unsupported_numbers
 
 # Разбор длиннее новости, и текста-основы ему нужно больше: по одному абзацу
 # инструкцию не напишешь, а попытка — это сочинительство.
@@ -103,7 +103,7 @@ def write_explainer(topic: str, source: str, client, attempts: int = 2):
 
     prompt = build_prompt(topic, source)
     invented = []
-    for _ in range(attempts):
+    for attempt in range(attempts):
         if invented:
             prompt = (f"{prompt}\n\nВ прошлый раз ты написал числа, которых "
                       f"нет в материалах: {', '.join(invented)}. "
@@ -116,8 +116,21 @@ def write_explainer(topic: str, source: str, client, attempts: int = 2):
             continue
 
         invented = unsupported_numbers(text, source)
-        if not invented:
-            return WriteResult(text=text[:MAX_LENGTH])
+        if invented:
+            continue
+
+        if len(text) <= MAX_LENGTH:
+            return WriteResult(text=text)
+        # Как и в новостном посте: длинный текст переписывается, а не
+        # обрезается. Обрезка по счётчику уносит концовку, а в разборе
+        # концовка — это «что нужно сделать», ради чего его и читают.
+        if attempt + 1 < attempts:
+            prompt = (f"{prompt}\n\nТвой разбор занял {len(text)} знаков, "
+                      f"а предел — {MAX_LENGTH}. Перепиши короче, уложись "
+                      f"в 950. Сокращай пояснения, но оставь целиком раздел "
+                      f"«Что нужно сделать».")
+            continue
+        return WriteResult(text=fit(text, MAX_LENGTH))
 
     if invented:
         return WriteResult(reason="числа, которых нет в материалах: "
