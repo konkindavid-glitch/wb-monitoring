@@ -50,16 +50,15 @@ def test_openrouter_sends_expected_payload_and_reads_the_answer(monkeypatch):
         def json(self):
             return {"choices": [{"message": {"content": '{"a": {}}'}}]}
 
-    def fake_post(url, headers=None, json=None, timeout=None):
-        sent["url"] = url
-        sent["headers"] = headers
-        sent["json"] = json
-        return FakeResponse()
+    class FakeClient:
+        def post(self, url, headers=None, json=None):
+            sent["url"] = url
+            sent["headers"] = headers
+            sent["json"] = json
+            return FakeResponse()
 
-    import httpx
-    monkeypatch.setattr(httpx, "post", fake_post)
-
-    client = judgment.OpenRouterClient("anthropic/claude-haiku-4.5")
+    client = judgment.OpenRouterClient("anthropic/claude-haiku-4.5",
+                                       client=FakeClient())
     assert client.complete("промпт") == '{"a": {}}'
     assert sent["url"] == judgment.OpenRouterClient.URL
     assert sent["headers"]["Authorization"] == "Bearer or-test"
@@ -73,10 +72,9 @@ def test_openrouter_failure_is_caught_by_judgment_factors(monkeypatch):
 
     import httpx
 
-    def failing_post(*a, **kw):
-        raise httpx.HTTPError("роутер недоступен")
-
-    monkeypatch.setattr(httpx, "post", failing_post)
+    class FailingClient:
+        def post(self, *a, **kw):
+            raise httpx.HTTPError("роутер недоступен")
 
     from datetime import datetime, timezone
     from monitoring.models import SourceItem
@@ -85,7 +83,8 @@ def test_openrouter_failure_is_caught_by_judgment_factors(monkeypatch):
                       discovered_at=datetime(2026, 8, 27, tzinfo=timezone.utc))
 
     stats = {}
-    assert judgment.judgment_factors([item], judgment.OpenRouterClient(),
-                                     stats=stats) == {"a": {}}
+    assert judgment.judgment_factors(
+        [item], judgment.OpenRouterClient(client=FailingClient()),
+        stats=stats) == {"a": {}}
     assert stats["failed"] == 1
     assert "роутер недоступен" in stats["error"]

@@ -54,18 +54,17 @@ def format_digest(hits: list, degraded: list, report: dict) -> str:
 
 
 def send(text: str, token: str, chat_id: str) -> bool:
-    """Отправка. Неудача не роняет тик — находки останутся неотданными."""
+    """Отправка. Неудача не роняет тик — находки останутся неотданными.
+
+    Идёт через тот же _call, что и всё остальное: своя ветка со своим
+    httpx.post означала бы свой клиент мимо IPv4-привязки и своё молчание
+    вместо записи причины в лог.
+    """
     if not token or not chat_id:
         return False
-    try:
-        response = httpx.post(
-            API.format(token=token),
-            json={"chat_id": chat_id, "text": text,
-                  "disable_web_page_preview": True},
-            timeout=TIMEOUT)
-        return response.status_code == 200
-    except httpx.HTTPError:
-        return False
+    return _call(API.format(token=token),
+                 {"chat_id": chat_id, "text": text,
+                  "disable_web_page_preview": True}) is not None
 
 
 # --- карточка с обложкой и кнопками ---------------------------------------
@@ -85,6 +84,22 @@ ME_API = "https://api.telegram.org/bot{token}/getMe"
 CAPTION_LIMIT = 1024
 
 
+_CLIENT = None
+
+
+def _post(url: str, **kwargs):
+    """Единственная точка выхода в сеть. Клиент общий и только по IPv4.
+
+    Через неё же тесты подменяют сеть: подменять httpx.post целиком значило
+    бы трогать и коллекторы, которым IPv4-привязка не нужна.
+    """
+    global _CLIENT
+    if _CLIENT is None:
+        from monitoring.net import ipv4_client
+        _CLIENT = ipv4_client(TIMEOUT)
+    return _CLIENT.post(url, **kwargs)
+
+
 def _method(url: str) -> str:
     return url.rsplit("/", 1)[-1]
 
@@ -99,9 +114,8 @@ def _call(url: str, payload: dict, files: dict = None):
     """
     method = _method(url)
     try:
-        response = httpx.post(url, data=payload if files else None,
-                              json=None if files else payload,
-                              files=files, timeout=TIMEOUT)
+        response = _post(url, data=payload if files else None,
+                         json=None if files else payload, files=files)
         body = response.json()
     except httpx.HTTPError as exc:
         print(f"[telegram] {method}: сеть — {exc}")
@@ -183,17 +197,18 @@ def delete_message(message_id: int, token: str, chat_id: str) -> bool:
                  {"chat_id": chat_id, "message_id": message_id}) is not None
 
 
-def get_updates(token: str, offset: int, timeout: int = 25) -> list:
-    """Длинный опрос обновлений. Список может быть пустым, None не бывает.
+def get_updates(token: str, offset: int, timeout: int = 25):
+    """Длинный опрос обновлений: список при успехе, None при отказе.
 
-    Отказ логируется отдельно от пустого списка. Разница принципиальная:
-    пустой список значит «никто ничего не нажимал», отказ — «нажатия есть,
-    но мы их не видим», и снаружи это выглядело одинаково.
+    Разница принципиальная. Пустой список значит «никто ничего не нажимал»,
+    None — «нажатия есть, но мы их не видим». Раньше и то и другое было
+    пустым списком, и вызывающий не мог ни отступить, ни пожаловаться:
+    он молотил отказывающий адрес по разу в секунду, заливая лог.
     """
     if not token:
-        return []
+        return None
     try:
-        response = httpx.post(
+        response = _post(
             UPDATES_API.format(token=token),
             json={"offset": offset, "timeout": timeout,
                   # channel_post нужен, чтобы бот сам назвал id канала:
@@ -201,21 +216,21 @@ def get_updates(token: str, offset: int, timeout: int = 25) -> list:
                   # каждую публикацию.
                   "allowed_updates": ["callback_query", "message",
                                       "channel_post"]},
-            timeout=timeout + 10)
+            timeout=timeout + 10.0)
         body = response.json()
     except httpx.HTTPError as exc:
         print(f"[telegram] getUpdates: сеть — {exc}")
-        return []
+        return None
     except ValueError:
         print("[telegram] getUpdates: ответ не разобрался")
-        return []
+        return None
 
     if not body.get("ok"):
         # 409 означает установленный вебхук: пока он есть, getUpdates
         # не отдаст ни одного обновления, и кнопки мертвы полностью.
         print(f"[telegram] getUpdates: {body.get('error_code')} "
               f"{body.get('description')}")
-        return []
+        return None
     return body.get("result", [])
 
 

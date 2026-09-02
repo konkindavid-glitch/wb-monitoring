@@ -74,15 +74,24 @@ class OpenRouterClient:
 
     URL = "https://openrouter.ai/api/v1/chat/completions"
 
-    def __init__(self, model: str = OPENROUTER_MODEL, timeout: float = 60.0):
+    def __init__(self, model: str = OPENROUTER_MODEL, timeout: float = 60.0,
+                 client=None):
         self._key = os.environ["OPENROUTER_API_KEY"]
         self._model = model
         self._timeout = timeout
+        # Клиент внедряется, а не подменяется глобально: подмена httpx.post
+        # в тестах перестала перехватывать вызов, и тест молча ушёл в сеть
+        # к настоящему openrouter.ai. Тест, ходящий в интернет, — не тест.
+        self._client = client
 
     def complete(self, prompt: str) -> str:
-        import httpx
+        from monitoring.net import ipv4_client
 
-        response = httpx.post(
+        # По IPv4, как и Телеграм: у openrouter.ai тоже есть AAAA-запись,
+        # а маршрута для IPv6 в контейнере нет — запрос упал бы с ENETUNREACH.
+        if self._client is None:
+            self._client = ipv4_client(self._timeout)
+        response = self._client.post(
             self.URL,
             headers={
                 "Authorization": f"Bearer {self._key}",
@@ -96,7 +105,6 @@ class OpenRouterClient:
                 "max_tokens": MAX_TOKENS,
                 "messages": [{"role": "user", "content": prompt}],
             },
-            timeout=self._timeout,
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]

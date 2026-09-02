@@ -620,11 +620,22 @@ def poll_moderation(deps, seconds: int) -> None:
 
     deadline = time.monotonic() + seconds
     offset = read_offset()
+    backoff = 1.0
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return
         updates = get_updates(deps.token, offset, timeout=int(min(25, remaining)))
+
+        # None — отказ, а не отсутствие нажатий. Отказ бывает мгновенным
+        # (ENETUNREACH возвращается сразу, без попытки соединиться), и без
+        # паузы цикл повторял запрос по разу в секунду, заливая лог.
+        if updates is None:
+            time.sleep(min(backoff, max(remaining, 0)))
+            backoff = min(backoff * 2, 30.0)
+            continue
+        backoff = 1.0
+
         for update in updates:
             offset = update["update_id"] + 1
             try:
