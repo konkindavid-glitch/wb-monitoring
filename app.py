@@ -479,6 +479,49 @@ def handle_message(message: dict, deps) -> None:
     print(f"[moderation] правка · {hit_id}")
 
 
+# Каналы, о которых уже сказали. Повторять при каждой публикации незачем:
+# одно сообщение полезно, десять — шум, из-за которого перестают читать бота.
+_ANNOUNCED_CHATS = set()
+
+
+def channel_is_configured(chat: dict) -> bool:
+    configured = os.getenv("TELEGRAM_CHANNEL_ID", "").strip()
+    if not configured:
+        return False
+    username = chat.get("username") or ""
+    return configured in {str(chat.get("id")), f"@{username}", username}
+
+
+def handle_channel_post(post: dict, deps) -> None:
+    """Бот увидел публикацию в канале — значит знает его id, и говорит его.
+
+    Узнавать id канала вручную неудобно: у приватного канала нет имени,
+    а гонять пользователя к сторонним ботам за идентификатором его же
+    канала — плохой совет. Бот админ, он видит публикации, и сказать id
+    может сам.
+    """
+    chat = post.get("chat") or {}
+    chat_id = chat.get("id")
+    if chat_id is None or chat.get("type") != "channel":
+        return
+    if channel_is_configured(chat) or chat_id in _ANNOUNCED_CHATS:
+        return
+    _ANNOUNCED_CHATS.add(chat_id)
+
+    title = chat.get("title") or "без названия"
+    username = chat.get("username")
+    value = f"@{username}" if username else str(chat_id)
+    send("\n".join([
+        f"Нашёл канал «{title}».",
+        "",
+        "Чтобы посты уходили туда, задайте в Амвере переменную:",
+        f"TELEGRAM_CHANNEL_ID={value}",
+        "",
+        "После сохранения Амвера перезапустит контейнер сама.",
+    ]), deps.token, deps.chat_id)
+    print(f"[chat] канал «{title}» id={chat_id} username={username or '—'}")
+
+
 def poll_moderation(deps, seconds: int) -> None:
     """Слушает нажатия отведённое время, потом возвращает управление циклу.
 
@@ -503,6 +546,8 @@ def poll_moderation(deps, seconds: int) -> None:
                     handle_callback(update["callback_query"], deps)
                 elif "message" in update:
                     handle_message(update["message"], deps)
+                elif "channel_post" in update:
+                    handle_channel_post(update["channel_post"], deps)
             except Exception as exc:
                 print(f"[fail] обновление {update.get('update_id')}: {exc}")
         if updates:

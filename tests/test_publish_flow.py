@@ -249,3 +249,86 @@ def test_press_survives_a_broken_database(monkeypatch):
 def test_callback_roundtrip_matches_what_the_keyboard_emits():
     assert parse_callback(callback_data(PUBLISH, "hit_real")) == (PUBLISH,
                                                                   "hit_real")
+
+
+# --- поиск канала ----------------------------------------------------------
+
+def channel_post(chat_id=-1001234567890, title="Новости селлеров",
+                 username=None, chat_type="channel"):
+    chat = {"id": chat_id, "type": chat_type, "title": title}
+    if username:
+        chat["username"] = username
+    return {"message_id": 7, "chat": chat, "text": "проверка"}
+
+
+class Notes:
+    def __init__(self):
+        self.sent = []
+
+    def install(self, monkeypatch):
+        monkeypatch.setattr(app, "send",
+                            lambda text, token, chat: self.sent.append(text) or True)
+        app._ANNOUNCED_CHATS.clear()
+
+
+def test_bot_reports_the_channel_id_itself(monkeypatch):
+    """Узнавать id приватного канала вручную неудобно, а гонять человека
+    к сторонним ботам за идентификатором его же канала — плохой совет."""
+    notes = Notes()
+    notes.install(monkeypatch)
+    monkeypatch.delenv("TELEGRAM_CHANNEL_ID", raising=False)
+
+    app.handle_channel_post(channel_post(), make_deps())
+
+    assert "TELEGRAM_CHANNEL_ID=-1001234567890" in notes.sent[0]
+    assert "Новости селлеров" in notes.sent[0]
+
+
+def test_public_channel_is_offered_by_username(monkeypatch):
+    """Bot API принимает @имя напрямую — числовой id тогда лишний."""
+    notes = Notes()
+    notes.install(monkeypatch)
+    monkeypatch.delenv("TELEGRAM_CHANNEL_ID", raising=False)
+
+    app.handle_channel_post(channel_post(username="sellers"), make_deps())
+
+    assert "TELEGRAM_CHANNEL_ID=@sellers" in notes.sent[0]
+
+
+def test_configured_channel_is_not_announced(monkeypatch):
+    notes = Notes()
+    notes.install(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_CHANNEL_ID", "-1001234567890")
+
+    app.handle_channel_post(channel_post(), make_deps())
+    assert notes.sent == []
+
+
+def test_channel_configured_by_username_is_not_announced(monkeypatch):
+    notes = Notes()
+    notes.install(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_CHANNEL_ID", "@sellers")
+
+    app.handle_channel_post(channel_post(username="sellers"), make_deps())
+    assert notes.sent == []
+
+
+def test_the_same_channel_is_announced_only_once(monkeypatch):
+    """Одно сообщение полезно, десять — шум, из-за которого перестают
+    читать бота."""
+    notes = Notes()
+    notes.install(monkeypatch)
+    monkeypatch.delenv("TELEGRAM_CHANNEL_ID", raising=False)
+
+    for _ in range(3):
+        app.handle_channel_post(channel_post(), make_deps())
+    assert len(notes.sent) == 1
+
+
+def test_group_chats_are_not_mistaken_for_channels(monkeypatch):
+    notes = Notes()
+    notes.install(monkeypatch)
+    monkeypatch.delenv("TELEGRAM_CHANNEL_ID", raising=False)
+
+    app.handle_channel_post(channel_post(chat_type="supergroup"), make_deps())
+    assert notes.sent == []

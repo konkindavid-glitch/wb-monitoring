@@ -168,7 +168,11 @@ def get_updates(token: str, offset: int, timeout: int = 25) -> list:
         response = httpx.post(
             UPDATES_API.format(token=token),
             json={"offset": offset, "timeout": timeout,
-                  "allowed_updates": ["callback_query", "message"]},
+                  # channel_post нужен, чтобы бот сам назвал id канала:
+                  # искать его вручную — возня, а бот и так админ и видит
+                  # каждую публикацию.
+                  "allowed_updates": ["callback_query", "message",
+                                      "channel_post"]},
             timeout=timeout + 10)
         body = response.json()
     except (httpx.HTTPError, ValueError):
