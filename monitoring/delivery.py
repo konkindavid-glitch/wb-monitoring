@@ -76,6 +76,8 @@ EDIT_CAPTION_API = "https://api.telegram.org/bot{token}/editMessageCaption"
 DELETE_API = "https://api.telegram.org/bot{token}/deleteMessage"
 ANSWER_API = "https://api.telegram.org/bot{token}/answerCallbackQuery"
 UPDATES_API = "https://api.telegram.org/bot{token}/getUpdates"
+WEBHOOK_INFO_API = "https://api.telegram.org/bot{token}/getWebhookInfo"
+ME_API = "https://api.telegram.org/bot{token}/getMe"
 
 # Подпись к фото ограничена 1024 символами, а не 4096, как текст сообщения.
 # Разбор по факторам в них не всегда влезает, поэтому длинная карточка уходит
@@ -83,16 +85,37 @@ UPDATES_API = "https://api.telegram.org/bot{token}/getUpdates"
 CAPTION_LIMIT = 1024
 
 
+def _method(url: str) -> str:
+    return url.rsplit("/", 1)[-1]
+
+
 def _call(url: str, payload: dict, files: dict = None):
-    """Ответ Телеграма или None. Сбой доставки не должен ронять тик."""
+    """Ответ Телеграма или None. Сбой доставки не должен ронять тик.
+
+    Причина сбоя обязана попасть в лог. Раньше здесь стоял молчаливый
+    return None, и отказ Телеграма выглядел ровно как «всё хорошо, просто
+    ничего не пришло»: нажатая кнопка не давала ни результата, ни следа.
+    Ошибка, о которой нигде не сказано, — это не обработанная ошибка.
+    """
+    method = _method(url)
     try:
         response = httpx.post(url, data=payload if files else None,
                               json=None if files else payload,
                               files=files, timeout=TIMEOUT)
         body = response.json()
-    except (httpx.HTTPError, ValueError):
+    except httpx.HTTPError as exc:
+        print(f"[telegram] {method}: сеть — {exc}")
         return None
-    return body.get("result") if body.get("ok") else None
+    except ValueError:
+        print(f"[telegram] {method}: ответ не разобрался "
+              f"(код {response.status_code})")
+        return None
+
+    if not body.get("ok"):
+        print(f"[telegram] {method}: {body.get('error_code')} "
+              f"{body.get('description')}")
+        return None
+    return body.get("result")
 
 
 def send_card(text: str, token: str, chat_id: str, *,
@@ -161,7 +184,12 @@ def delete_message(message_id: int, token: str, chat_id: str) -> bool:
 
 
 def get_updates(token: str, offset: int, timeout: int = 25) -> list:
-    """Длинный опрос обновлений. Список может быть пустым, None не бывает."""
+    """Длинный опрос обновлений. Список может быть пустым, None не бывает.
+
+    Отказ логируется отдельно от пустого списка. Разница принципиальная:
+    пустой список значит «никто ничего не нажимал», отказ — «нажатия есть,
+    но мы их не видим», и снаружи это выглядело одинаково.
+    """
     if not token:
         return []
     try:
@@ -175,6 +203,31 @@ def get_updates(token: str, offset: int, timeout: int = 25) -> list:
                                       "channel_post"]},
             timeout=timeout + 10)
         body = response.json()
-    except (httpx.HTTPError, ValueError):
+    except httpx.HTTPError as exc:
+        print(f"[telegram] getUpdates: сеть — {exc}")
         return []
-    return body.get("result", []) if body.get("ok") else []
+    except ValueError:
+        print("[telegram] getUpdates: ответ не разобрался")
+        return []
+
+    if not body.get("ok"):
+        # 409 означает установленный вебхук: пока он есть, getUpdates
+        # не отдаст ни одного обновления, и кнопки мертвы полностью.
+        print(f"[telegram] getUpdates: {body.get('error_code')} "
+              f"{body.get('description')}")
+        return []
+    return body.get("result", [])
+
+
+def webhook_info(token: str) -> dict:
+    """Что Телеграм думает о вебхуке. Пустой url — можно опрашивать."""
+    if not token:
+        return {}
+    return _call(WEBHOOK_INFO_API.format(token=token), {}) or {}
+
+
+def bot_identity(token: str) -> dict:
+    """Кто мы для Телеграма. Заодно проверка, что токен вообще живой."""
+    if not token:
+        return {}
+    return _call(ME_API.format(token=token), {}) or {}

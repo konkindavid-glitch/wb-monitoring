@@ -44,6 +44,7 @@ from monitoring.moderation import (EDIT, EDIT_PROMPT, OUTCOME_TOAST,
                                    outcome_text, parse_callback)
 from monitoring.factors.judgment import judgment_factors
 from monitoring.factors.mechanical import mechanical_factors
+from monitoring.health import format_status
 from monitoring.heartbeat import build_report, map_hits_to_questions
 from monitoring.post import format_card, sample_card
 from monitoring.scoring import score_item
@@ -370,6 +371,7 @@ def handle_callback(query: dict, deps) -> None:
     if parsed is None:
         return
     action, hit_id = parsed
+    _PRESSES["count"] += 1
     message = query.get("message") or {}
     message_id = message.get("message_id")
     chat_id = str((message.get("chat") or {}).get("id", deps.chat_id))
@@ -459,8 +461,15 @@ def send_prompt(chat_id: str, deps):
 
 def handle_message(message: dict, deps) -> None:
     """Ответ редактора на приглашение к правке."""
-    reply_to = (message.get("reply_to_message") or {}).get("message_id")
     text = (message.get("text") or "").strip()
+    chat_id = str((message.get("chat") or {}).get("id", deps.chat_id))
+
+    if text.lower().lstrip("/").split("@")[0] in STATUS_COMMANDS:
+        send(format_status(collect_status(deps)), deps.token, chat_id)
+        print("[moderation] запрошено состояние")
+        return
+
+    reply_to = (message.get("reply_to_message") or {}).get("message_id")
     if not reply_to or not text:
         return
     try:
@@ -474,9 +483,86 @@ def handle_message(message: dict, deps) -> None:
         if hasattr(deps.repo, "rollback"):
             deps.repo.rollback()
         return
-    send(f"Правка записана к находке {hit_id}.", deps.token,
-         str((message.get("chat") or {}).get("id", deps.chat_id)))
+    send(f"Правка записана к находке {hit_id}.", deps.token, chat_id)
     print(f"[moderation] правка · {hit_id}")
+
+
+# --- состояние по запросу ---------------------------------------------------
+
+# Отметка сборки. Если бот отвечает на команду и показывает эту строку,
+# значит новый код доехал и работает — а это первое, что нужно знать,
+# когда «ничего не сработало».
+BUILD = "2026-09-02 · публикация постов"
+
+STATUS_COMMANDS = {"статус", "status", "диагностика", "ping"}
+
+# Счётчик обработанных нажатий: отличает «кнопку не нажимали» от
+# «нажатие пришло, но результат не дошёл».
+_PRESSES = {"count": 0}
+_LAST_TICK = {"text": ""}
+
+
+def check_telegram(deps) -> None:
+    """Проверка связи при старте: токен и вебхук.
+
+    Вебхук проверяется отдельной строкой не для полноты. Пока он установлен,
+    getUpdates отвечает 409 и не отдаёт ни одного обновления — кнопки мертвы
+    целиком, и выглядит это ровно как «никто ничего не нажимал». Такое
+    состояние обязано быть громким, а не выясняться перебором догадок.
+    """
+    from monitoring.delivery import bot_identity, webhook_info
+
+    if not deps.token:
+        print("[degraded] нет TELEGRAM_BOT_TOKEN — кнопки работать не будут")
+        return
+
+    identity = bot_identity(deps.token)
+    if not identity:
+        print("[degraded] Телеграм не признал TELEGRAM_BOT_TOKEN")
+        return
+    print(f"[start] бот @{identity.get('username', '?')}")
+
+    url = webhook_info(deps.token).get("url", "")
+    if not url:
+        return
+    print(f"[degraded] у бота установлен вебхук ({url}): getUpdates не отдаёт "
+          f"обновления, кнопки не работают. Вебхук нужно снять.")
+    send("\n".join([
+        "⚠️ Кнопки не будут работать.",
+        "",
+        f"У бота установлен вебхук: {url}",
+        "Пока он есть, Телеграм отдаёт нажатия ему, а не сюда.",
+        "",
+        "Снять его можно, открыв в браузере:",
+        f"https://api.telegram.org/bot<ТОКЕН>/deleteWebhook",
+    ]), deps.token, deps.chat_id)
+
+
+def collect_status(deps) -> dict:
+    """Факты о состоянии. Каждый добывается отдельно: недоступная база
+    не должна помешать узнать про вебхук, и наоборот."""
+    from monitoring.delivery import bot_identity, webhook_info
+
+    facts = {"build": BUILD, "channel": os.getenv("TELEGRAM_CHANNEL_ID", ""),
+             "last_tick": _LAST_TICK["text"], "presses": _PRESSES["count"]}
+
+    facts["bot_username"] = bot_identity(deps.token).get("username", "")
+    facts["webhook_url"] = webhook_info(deps.token).get("url", "")
+
+    if deps.repo is None:
+        facts["db_error"] = "не подключена"
+    else:
+        try:
+            deps.repo.degraded_sources()
+            facts["db_error"] = ""
+        except Exception as exc:
+            facts["db_error"] = str(exc)[:200]
+            if hasattr(deps.repo, "rollback"):
+                deps.repo.rollback()
+
+    client = deps.writer or deps.judge
+    facts["model"] = getattr(client, "_model", "") if client else ""
+    return facts
 
 
 # Каналы, о которых уже сказали. Повторять при каждой публикации незачем:
@@ -848,7 +934,9 @@ def main():
     # несколько минут — без этой строки он выглядит как зависание.
     print(f"[start] сборщик запущен, классов: {len(cadence)}, "
           f"источников: {len(deps.sources or [])}, "
-          f"классификатор: {'есть' if deps.judge else 'НЕТ'}")
+          f"классификатор: {'есть' if deps.judge else 'НЕТ'}, "
+          f"сборка: {BUILD}")
+    check_telegram(deps)
 
     while True:
         now = datetime.now(timezone.utc)
@@ -861,6 +949,7 @@ def main():
                 hits = counters.pop("hits", [])
                 state["hits_by_question"].update(map_hits_to_questions(hits))
                 print(f"[tick] class={cadence_class} {counters}")
+                _LAST_TICK["text"] = f"класс {cadence_class}, {counters}"
             except Exception as exc:
                 print(f"[fail] class={cadence_class}: {exc}")
                 # Откат обязателен: Postgres переводит транзакцию в aborted,
