@@ -321,18 +321,25 @@ class Repo:
             return cur.fetchone() is not None
 
     def explainer_candidates(self, hours: int, limit: int = 5) -> list:
-        """Темы для разбора: весомое за окно, о чём ещё не говорили.
+        """Темы для разбора: лучшее за окно, о чём ещё не говорили.
 
-        Порог по баллам не ставится: разбор — это не срочность, а польза,
-        и толковое объяснение правил вполне может вырасти из находки,
-        которая в срочные не прошла.
+        Полоса очереди здесь не фильтрует, и это не небрежность. В таблицу
+        находок попадает только то, что прошло стоп-правила: реклама, вода
+        и обрывки отсеиваются раньше и лежат в stop_rule_drops. DROP означает
+        «мало баллов», а не «хлам», — и в первую очередь мало их у того, что
+        размечалось, пока классификатор был недоступен: без семи факторов
+        из четырнадцати потолок — 65 из 160.
+
+        А для разбора важна не срочность, а польза: толковое объяснение правил
+        вырастает и из находки, которая в срочные не прошла. От пустых тем
+        защищает не порог, а требование к объёму материала в explainer.py.
         """
         with self.conn.cursor() as cur:
             cur.execute(
                 """SELECT hit_id, title, url, score, decision, platforms, topics
                      FROM monitoring_hits
                     WHERE discovered_at > now() - make_interval(hours => %s)
-                      AND decision <> 'DROP'
+                      AND score IS NOT NULL
                       AND hit_id NOT IN (SELECT hit_id FROM explainers)
                     ORDER BY score DESC, discovered_at DESC
                     LIMIT %s""", (hours, limit))

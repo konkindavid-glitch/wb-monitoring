@@ -391,6 +391,7 @@ def build_explainer(deps, slot: str):
         return None, (f"нет тем: за {EXPLAINER_WINDOW_HOURS} ч не нашлось "
                       f"находок выше порога, о которых ещё не говорили")
 
+    print(f"[explainer] тем к рассмотрению: {len(candidates)}")
     for hit in candidates:
         materials = []
         for source in [hit] + deps.repo.related_hits(hit, EXPLAINER_WINDOW_HOURS):
