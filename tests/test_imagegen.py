@@ -19,9 +19,11 @@ class Client:
             }}]}
         self.status_code = status
         self.sent = {}
+        self.models = []
 
     def post(self, url, headers=None, json=None):
         self.sent = {"url": url, "headers": headers, "json": json}
+        self.models.append(json["model"])
         return self
 
     def json(self):
@@ -167,3 +169,71 @@ def test_generated_cover_is_labelled():
     Image.new("RGB", (900, 1200), (120, 120, 130)).save(buffer, "JPEG")
     data = render(HIT, buffer.getvalue(), generated=True)
     assert data is not None
+
+
+# --- выбор модели -----------------------------------------------------------
+
+class Chain:
+    """Первая модель молчит, вторая рисует."""
+
+    def __init__(self, first_payload):
+        self.first_payload, self.models = first_payload, []
+        self.status_code = 200
+        self._payload = None
+
+    def post(self, url, headers=None, json=None):
+        self.models.append(json["model"])
+        self._payload = (self.first_payload if len(self.models) == 1 else {
+            "choices": [{"message": {"content":
+                                     f"data:image/png;base64,{PIXEL}"}}]})
+        return self
+
+    def json(self):
+        return self._payload
+
+    @property
+    def text(self):
+        import json as _json
+        return _json.dumps(self._payload)
+
+
+def test_cheapest_model_is_tried_first(monkeypatch):
+    """По прайсу OpenRouter она вчетверо дешевле Gemini за картинку."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.delenv("IMAGE_MODEL", raising=False)
+    client = Client()
+    imagegen.generate(HIT, client)
+    assert client.models == ["openai/gpt-5-image-mini"]
+
+
+def test_second_model_covers_for_the_first(monkeypatch):
+    """У разных провайдеров разная форма ответа. Если дешёвая не отдаёт
+    картинку через chat/completions, посты не должны остаться без обложек."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.delenv("IMAGE_MODEL", raising=False)
+    client = Chain({"choices": [{"message": {"content": "картинки нет"}}]})
+
+    assert imagegen.generate(HIT, client) == base64.b64decode(PIXEL)
+    assert client.models == ["openai/gpt-5-image-mini",
+                             "google/gemini-2.5-flash-image"]
+
+
+def test_explicit_model_disables_the_chain(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.setenv("IMAGE_MODEL", "свой/выбор")
+    client = Client()
+    imagegen.generate(HIT, client)
+    assert client.models == ["свой/выбор"]
+
+
+def test_working_model_is_named_in_the_log(monkeypatch, capsys):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.delenv("IMAGE_MODEL", raising=False)
+    imagegen.generate(HIT, Client())
+    assert "gpt-5-image-mini" in capsys.readouterr().out
+
+
+def test_lite_gemini_is_not_used_because_it_costs_the_same():
+    """«Lite» из семейства Gemini стоит за картинку столько же, сколько
+    обычная Nano Banana: экономии нет, только имя меньше."""
+    assert not any("lite" in model for model in imagegen.MODELS)

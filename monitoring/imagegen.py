@@ -22,7 +22,17 @@ import base64
 import os
 import re
 
-MODEL = "google/gemini-2.5-flash-image"
+# Цепочка, а не одна модель. Первая — самая дешёвая из умеющих отдавать
+# картинку: по прайсу OpenRouter 0,000008 за токен вывода против 0,00003
+# у Gemini, то есть вчетверо. Вторая — та, на которой обложки уже работали:
+# у разных провайдеров разная форма ответа, и если дешёвая не отдаст
+# картинку через chat/completions, посты не должны остаться без обложек.
+#
+# Отдельно: «Lite» из семейства Gemini брать смысла нет — за картинку она
+# стоит столько же, сколько обычная Nano Banana. Дешевле только по промпту,
+# а он здесь копеечный.
+MODELS = ["openai/gpt-5-image-mini", "google/gemini-2.5-flash-image"]
+MODEL = MODELS[0]
 URL = "https://openrouter.ai/api/v1/chat/completions"
 TIMEOUT = 120.0
 
@@ -81,6 +91,12 @@ def scene_for(hit: dict) -> str:
     return DEFAULT_SCENE
 
 
+def models() -> list:
+    """Модели по порядку. IMAGE_MODEL задаёт единственную, без запасной."""
+    chosen = os.getenv("IMAGE_MODEL", "").strip()
+    return [chosen] if chosen else list(MODELS)
+
+
 def build_prompt(hit: dict) -> str:
     return SCENE.format(scene=scene_for(hit))
 
@@ -121,21 +137,34 @@ def generate(hit: dict, client=None) -> bytes:
         from monitoring.net import plain_client
         client = plain_client(TIMEOUT)
 
-    try:
-        response = client.post(
-            URL,
-            headers={"Authorization": f"Bearer {key}",
-                     "Content-Type": "application/json",
-                     "HTTP-Referer": "https://amvera.ru",
-                     "X-Title": "Monitoring Map"},
-            json={"model": os.getenv("IMAGE_MODEL", MODEL),
-                  "modalities": ["image", "text"],
-                  "messages": [{"role": "user", "content": build_prompt(hit)}]})
+    prompt = build_prompt(hit)
+    for model in models():
+        try:
+            response = client.post(
+                URL,
+                headers={"Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json",
+                         "HTTP-Referer": "https://amvera.ru",
+                         "X-Title": "Monitoring Map"},
+                json={"model": model,
+                      "modalities": ["image", "text"],
+                      "messages": [{"role": "user", "content": prompt}]})
+        except Exception as exc:
+            print(f"[cover] {model} недоступна: {exc}")
+            continue
+
         if response.status_code != 200:
-            print(f"[cover] генератор ответил {response.status_code}: "
+            print(f"[cover] {model} ответила {response.status_code}: "
                   f"{response.text[:200]}")
-            return b""
-        return extract_image(response.json())
-    except Exception as exc:
-        print(f"[cover] генератор недоступен: {exc}")
-        return b""
+            continue
+
+        image = extract_image(response.json())
+        if image:
+            print(f"[cover] нарисовала {model}")
+            return image
+        # Успешный ответ без картинки — модель не умеет её отдавать через
+        # chat/completions. Это не сбой связи, а неподходящая модель,
+        # поэтому идём к следующей, а не повторяем ту же.
+        print(f"[cover] {model} вернула ответ без картинки")
+
+    return b""
