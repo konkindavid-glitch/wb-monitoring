@@ -274,19 +274,30 @@ COVER_SOURCE = "generated"
 
 
 def cover_background(hit: dict, fetcher):
-    """(картинка, сгенерирована ли). Пустая картинка — будет плашка."""
+    """(картинка, сгенерирована ли). Пустая картинка — будет плашка.
+
+    Источник называется в логе всегда, а не только при сбое. Молчание при
+    успехе неотличимо от молчания при тихом отказе — на этом уже потерян
+    день: генератор мог не звать модель вовсе, и снаружи это выглядело бы
+    точно так же.
+    """
     mode = os.getenv("COVER_SOURCE", COVER_SOURCE).strip().lower()
 
     if mode == "generated":
         from monitoring.imagegen import generate
         drawn = generate(hit)
         if drawn:
+            print(f"[cover] фон нарисован, {len(drawn)} байт")
             return drawn, True
 
     if mode in ("generated", "photo") and fetcher is not None and hit.get("url"):
         from monitoring.cover import article_photo
-        return article_photo(hit["url"], fetcher), False
+        photo = article_photo(hit["url"], fetcher)
+        print(f"[cover] фон из статьи, {len(photo)} байт" if photo
+              else "[cover] фона нет — будет фирменная плашка")
+        return photo, False
 
+    print("[cover] фирменная плашка")
     return b"", False
 
 

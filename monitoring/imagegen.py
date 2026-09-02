@@ -111,6 +111,7 @@ def generate(hit: dict, client=None) -> bytes:
     """
     key = os.getenv("OPENROUTER_API_KEY")
     if not key:
+        print("[cover] нет OPENROUTER_API_KEY — рисовать нечем")
         return b""
     if is_sensitive(hit):
         print("[cover] тема чувствительная — картинку не генерирую")
