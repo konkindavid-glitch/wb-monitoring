@@ -100,3 +100,16 @@ def test_webhook_info_reports_the_configured_url(monkeypatch):
 def test_webhook_info_without_token_does_not_call_telegram(monkeypatch):
     monkeypatch.setattr(delivery, "_post", lambda *a, **k: 1 / 0)
     assert delivery.webhook_info("") == {}
+
+
+def test_second_instance_is_named_as_the_reason(monkeypatch, capsys):
+    """409 не лечится ожиданием: обновления забирает кто-то ещё, и чинится
+    это снаружи — значит в логе должно быть сказано что делать."""
+    monkeypatch.setattr(delivery, "_post", lambda *a, **k: Reply(
+        {"ok": False, "error_code": 409,
+         "description": "Conflict: terminated by other getUpdates request"}))
+
+    assert delivery.get_updates("T", 0, timeout=0) is None
+    out = capsys.readouterr().out
+    assert "409" in out
+    assert "перезапустите" in out.lower()

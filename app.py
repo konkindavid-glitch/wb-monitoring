@@ -876,6 +876,13 @@ def handle_channel_post(post: dict, deps) -> None:
     print(f"[chat] канал «{title}» id={chat_id} username={username or '—'}")
 
 
+# Отступ переживает круг цикла намеренно. Локальной переменной он сбрасывался
+# в единицу каждые шестьдесят секунд, и при затяжном отказе — например, при
+# 409 от второго экземпляра бота — лог всё равно наполнялся: рост до тридцати
+# секунд не успевал случиться.
+_BACKOFF = {"seconds": 1.0}
+
+
 def poll_moderation(deps, seconds: int) -> None:
     """Слушает нажатия отведённое время, потом возвращает управление циклу.
 
@@ -888,7 +895,6 @@ def poll_moderation(deps, seconds: int) -> None:
 
     deadline = time.monotonic() + seconds
     offset = read_offset()
-    backoff = 1.0
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -899,10 +905,10 @@ def poll_moderation(deps, seconds: int) -> None:
         # (ENETUNREACH возвращается сразу, без попытки соединиться), и без
         # паузы цикл повторял запрос по разу в секунду, заливая лог.
         if updates is None:
-            time.sleep(min(backoff, max(remaining, 0)))
-            backoff = min(backoff * 2, 30.0)
+            time.sleep(min(_BACKOFF["seconds"], max(remaining, 0)))
+            _BACKOFF["seconds"] = min(_BACKOFF["seconds"] * 2, 30.0)
             continue
-        backoff = 1.0
+        _BACKOFF["seconds"] = 1.0
 
         for update in updates:
             offset = update["update_id"] + 1

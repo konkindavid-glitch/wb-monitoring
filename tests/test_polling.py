@@ -37,6 +37,7 @@ def run_poll(monkeypatch, replies, seconds=60):
     monkeypatch.setattr(app.time, "sleep", clock.sleep)
     monkeypatch.setattr(app, "get_updates", fake_updates)
     monkeypatch.setattr(app, "read_offset", lambda: 0)
+    monkeypatch.setattr(app, "_BACKOFF", {"seconds": 1.0})
     monkeypatch.setattr(app, "write_offset", lambda value: None)
 
     app.poll_moderation(app.Deps(cfg=None, token="T", chat_id="1"), seconds)
@@ -200,3 +201,15 @@ def test_a_working_path_that_dies_is_retried_from_scratch(monkeypatch):
     with pytest.raises(httpx.HTTPError):
         delivery._post("https://x/botT/getMe")      # запомненный путь отвалился
     assert delivery._post("https://x/botT/getMe") == "ответ"
+
+
+def test_backoff_survives_the_cycle(monkeypatch):
+    """Локальной переменной отступ сбрасывался каждые шестьдесят секунд,
+    и при затяжном отказе лог всё равно наполнялся."""
+    monkeypatch.setattr(app, "_BACKOFF", {"seconds": 1.0})
+    run_poll(monkeypatch, [], seconds=10)
+    grown = app._BACKOFF["seconds"]
+
+    monkeypatch.setattr(app, "read_offset", lambda: 0)
+    monkeypatch.setattr(app, "get_updates", lambda *a, **k: None)
+    assert grown > 1.0
