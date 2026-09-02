@@ -50,7 +50,7 @@ from monitoring.factors.judgment import judgment_factors
 from monitoring.factors.mechanical import mechanical_factors
 from monitoring.health import format_status
 from monitoring.heartbeat import build_report, map_hits_to_questions
-from monitoring.post import format_card, sample_card
+from monitoring.post import format_draft, sample_card
 from monitoring.scoring import score_item
 from monitoring.topics import build_matchers, classify, detect_platform
 from monitoring.writer import article_text, write_post
@@ -323,15 +323,84 @@ def render_cover(hit: dict, fetcher=None):
     return None
 
 
+def cover_path(hit_id: str) -> Path:
+    snapshots = Path(os.getenv("SNAPSHOT_DIR", str(ROOT / "data" / "snapshots")))
+    return snapshots.parent / "covers" / f"{hit_id}.jpg"
+
+
+def keep_cover(hit_id: str, cover: bytes) -> None:
+    """Сохраняет обложку до публикации.
+
+    Рисовать её заново в момент нажатия нельзя: генератор каждый раз даёт
+    другую картинку, и в канал ушло бы не то изображение, которое одобрили.
+    """
+    if not cover:
+        return
+    try:
+        path = cover_path(hit_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(cover)
+    except OSError as exc:
+        print(f"[cover] не сохранилась: {exc}")
+
+
+def load_cover(hit_id: str) -> bytes:
+    try:
+        return cover_path(hit_id).read_bytes()
+    except OSError:
+        return b""
+
+
+def write_post_for(hit: dict, deps):
+    """Пишет пост по находке. Возвращает WriteResult."""
+    from monitoring.writer import WriteResult
+
+    url = hit.get("url") or ""
+    if not url:
+        return WriteResult(reason="у находки нет ссылки")
+    return write_post(hit, article_text(url, deps.fetcher),
+                      deps.writer or deps.judge)
+
+
 def deliver_card(hit: dict, deps, is_test: bool = False) -> bool:
-    """Карточка редактору: обложка, разбор, три кнопки решения."""
+    """Готовый пост редактору: обложка, текст, три кнопки решения.
+
+    Пост пишется здесь, а не после одобрения. Иначе редактор нажимает
+    «Запостить» под карточкой с баллами, не видя текста, который уйдёт
+    в канал, — то есть одобряет то, чего не читал.
+
+    Разбора по факторам в сообщении нет намеренно: сообщение обязано
+    выглядеть ровно так, как выйдет в канал. Полоса очереди видна
+    на обложке, а баллы с факторами идут в лог.
+    """
+    hit_id = hit.get("hit_id", "hit_sample")
+    written = write_post_for(hit, deps)
+    text = written.text if written else format_draft(hit, written.reason)
+
+    print(f"[delivery] {hit_id} · {hit.get('score')} {hit.get('decision')} · "
+          + ("пост готов" if written else f"без поста: {written.reason}"))
+
     if deps.dry_run:
-        print(format_card(hit, is_test=is_test))
+        print(text)
         return True
-    message_id = send_card(
-        format_card(hit, is_test=is_test), deps.token, deps.chat_id,
-        cover=render_cover(hit, deps.fetcher),
-        reply_markup=keyboard(hit.get("hit_id", "hit_sample")))
+
+    if written and deps.repo is not None:
+        try:
+            deps.repo.save_post_text(hit_id, written.text)
+        except Exception as exc:
+            print(f"[fail] текст поста не сохранён: {exc}")
+            if hasattr(deps.repo, "rollback"):
+                deps.repo.rollback()
+
+    cover = render_cover(hit, deps.fetcher)
+    keep_cover(hit_id, cover)
+
+    if is_test:
+        send("🧪 Проверка связи. Ниже — готовый пост так, как он выйдет "
+             "в канал.", deps.token, deps.chat_id)
+
+    message_id = send_card(text, deps.token, deps.chat_id, cover=cover,
+                           reply_markup=keyboard(hit_id))
     return message_id is not None
 
 
@@ -447,9 +516,20 @@ def run_explainer(deps, slot: str) -> bool:
 
     deps.repo.save_explainer(hit["hit_id"], slot, hit.get("title", ""), result)
 
-    card = "\n\n".join([f"📚 РАЗБОР · выпуск {slot}", result])
-    message_id = send_card(card, deps.token, deps.chat_id,
-                           cover=render_cover(hit, deps.fetcher),
+    # Разбор публикуется тем же путём, что и новость, значит и текст берётся
+    # оттуда же — из post_text. Иначе «Запостить» под разбором отправило бы
+    # в канал новостной пост, написанный по той же находке.
+    try:
+        deps.repo.save_post_text(hit["hit_id"], result)
+    except Exception as exc:
+        print(f"[fail] текст разбора не сохранён: {exc}")
+
+    # Служебного заголовка «РАЗБОР · выпуск» в сообщении нет: редактор обязан
+    # видеть текст ровно таким, каким тот выйдет в канал. Номер выпуска нужен
+    # логу, а не читателю.
+    cover = render_cover(hit, deps.fetcher)
+    keep_cover(hit["hit_id"], cover)
+    message_id = send_card(result, deps.token, deps.chat_id, cover=cover,
                            reply_markup=keyboard(hit["hit_id"]))
     print(f"[explainer] выпуск {slot}: {hit['hit_id']}, "
           f"{len(result)} знаков, отправлен: {message_id is not None}")
@@ -503,7 +583,12 @@ def resolve_hit(hit_id: str, deps):
 
 
 def publish_hit(hit_id: str, deps):
-    """Пишет пост по находке и публикует. Возвращает (получилось, что сказать).
+    """Публикует одобренный пост. Возвращает (получилось, что сказать).
+
+    Публикуется ровно то, что редактор видел и одобрил: текст берётся
+    сохранённым, обложка — с диска. Написать заново в момент нажатия значило
+    бы отправить в канал другой текст и другую картинку, чем те, под которыми
+    нажали кнопку.
 
     Пост уходит в канал из TELEGRAM_CHANNEL_ID, а если канал не задан —
     в тот же чат модерации. Молчаливое «никуда» недопустимо: редактор нажал
@@ -513,20 +598,21 @@ def publish_hit(hit_id: str, deps):
     if hit is None:
         return False, "находка не найдена в базе"
 
-    url = hit.get("url") or ""
-    source = article_text(url, deps.fetcher) if url else ""
-    written = write_post(hit, source, deps.writer or deps.judge)
-    if not written:
-        return False, written.reason
+    text = (hit.get("post_text") or "").strip()
+    if not text:
+        # Запасной путь: находка из проверочной карточки или из времён, когда
+        # текст ещё не сохранялся. Лучше написать сейчас, чем отказать.
+        written = write_post_for(hit, deps)
+        if not written:
+            return False, written.reason
+        text = written.text
 
-    # Ссылка дописывается кодом, а не моделью: единственное место, где её
-    # нельзя переврать.
-    text = f"{written.text}\n\n{url}" if url else written.text
-
+    # Ссылки на источник в посте нет: канал читают ради сути, а не ради
+    # перехода на отраслевой сайт.
     channel = os.getenv("TELEGRAM_CHANNEL_ID", "")
     target = channel or deps.chat_id
-    message_id = send_card(text, deps.token, target,
-                           cover=render_cover(hit, deps.fetcher))
+    cover = load_cover(hit_id) or render_cover(hit, deps.fetcher)
+    message_id = send_card(text, deps.token, target, cover=cover)
     if message_id is None:
         from monitoring.delivery import last_error
         # Словами Телеграма: «bot is not a member of the channel chat»

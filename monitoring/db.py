@@ -253,7 +253,7 @@ class Repo:
         with self.conn.cursor() as cur:
             cur.execute(
                 """SELECT hit_id, title, url, score, decision, factors,
-                          platforms, topics
+                          platforms, topics, post_text
                      FROM monitoring_hits
                     WHERE decision = ANY(%s) AND handed_off_at IS NULL
                     ORDER BY score DESC, discovered_at
@@ -283,6 +283,19 @@ class Repo:
                 """SELECT query_id FROM monitoring_queries
                     WHERE consecutive_failures >= 3 AND enabled""")
             return [row[0] for row in cur.fetchall()]
+
+    def save_post_text(self, hit_id: str, text: str) -> None:
+        """Готовый текст поста к находке.
+
+        Публиковать надо ровно то, что редактор одобрил. Вторая генерация
+        в момент нажатия дала бы другой текст, и в канал ушло бы
+        несогласованное.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE monitoring_hits SET post_text = %s, updated_at = now() "
+                " WHERE hit_id = %s", (text, hit_id))
+        self.conn.commit()
 
     # --- решения редактора ------------------------------------------------
 
@@ -344,7 +357,7 @@ class Repo:
         with self.conn.cursor() as cur:
             cur.execute(
                 """SELECT hit_id, title, url, score, decision, factors,
-                          platforms, topics
+                          platforms, topics, post_text
                      FROM monitoring_hits WHERE hit_id = %s""", (hit_id,))
             found = rows_to_dicts(cur)
             return found[0] if found else None

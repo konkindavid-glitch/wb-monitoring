@@ -1,91 +1,29 @@
-"""Карточка находки для отправки редактору.
+"""Что уходит редактору и в канал.
 
-Это НЕ готовый пост в канал. Пост требует проверенных фактов, расчёта эффекта
-и вывода «что делать» — всё это живёт в слоях, которых в v1 нет. Карточка
-показывает ровно то, что система знает наверняка: что нашли, где, по каким
-темам и почему столько баллов.
+Сообщение редактору — это готовый пост, слово в слово такой, каким он выйдет
+в канал. Разбора по факторам и баллов в нём нет намеренно: редактор нажимает
+«Запостить» под текстом, а не под оценкой, и обязан видеть именно то, что
+уйдёт читателям. Оценка никуда не делась — она в логе доставки и в поле
+factors у находки, откуда её можно поднять для перекалибровки весов.
 
-Разбор по факторам в карточке обязателен. Редактор должен видеть не «130»,
-а из чего эти 130 сложились: иначе оценке невозможно ни доверять, ни спорить
-с ней, а калибровать пороги — тем более.
+Здесь остаётся только то, что нельзя доверить модели: сообщение о находке,
+для которой пост не написался, и эталонная находка для проверки связи.
 """
 
 TELEGRAM_LIMIT = 4096
 
-BAND_MARKS = {
-    "URGENT": "🔴 срочно",
-    "QUEUE": "🟡 в работу",
-    "BACKLOG": "⚪ в запас",
-    "DROP": "⚫ отброшено",
-}
 
-PLATFORM_NAMES = {
-    "WILDBERRIES": "Wildberries",
-    "OZON": "Ozon",
-    "YANDEX_MARKET": "Яндекс Маркет",
-    "CROSS_PLATFORM": "рынок целиком",
-}
+def format_draft(hit: dict, reason: str) -> str:
+    """Сообщение о находке, для которой пост не написался.
 
-TOPIC_NAMES = {
-    "seller_money": "деньги селлеров",
-    "rules_offer": "правила и оферты",
-    "advertising": "реклама",
-    "logistics_warehouse": "логистика и склады",
-    "algorithms_tech": "алгоритмы",
-    "ai_marketplace": "AI на маркетплейсах",
-    "regulation": "регулирование",
-    "disputes": "споры и суды",
-    "seller_cases": "кейсы селлеров",
-    "incidents_scandals": "проблемы и скандалы",
-    "market_trends": "тренды рынка",
-}
-
-
-def _fired(hit: dict) -> list:
-    factors = hit.get("factors") or {}
-    fired = [(k, v) for k, v in factors.items() if v.get("hit")]
-    return sorted(fired, key=lambda kv: -abs(kv[1].get("weight", 0)))
-
-
-def format_card(hit: dict, *, is_test: bool = False) -> str:
-    """Карточка находки. is_test помечает сообщение как проверочное."""
-    lines = []
-
-    if is_test:
-        lines += ["🧪 ПРОВЕРКА СВЯЗИ", "",
-                  "Это тестовая карточка: проверяем, что доходят сообщения, "
-                  "обложка и кнопки. Кнопки записывают решение — «Запостить» "
-                  "помечает находку согласованной; текст поста система пока "
-                  "не пишет.", ""]
-
-    band = BAND_MARKS.get(hit.get("decision"), hit.get("decision", "?"))
-    lines.append(f"{band} · {hit.get('score', '?')} баллов")
-    lines.append("")
-    lines.append(hit.get("title", "без заголовка"))
-
-    platforms = [PLATFORM_NAMES.get(p, p) for p in (hit.get("platforms") or [])]
-    topics = [TOPIC_NAMES.get(t, t) for t in (hit.get("topics") or [])]
-    if platforms or topics:
-        lines.append("")
-        if platforms:
-            lines.append(f"Площадка: {', '.join(platforms)}")
-        if topics:
-            lines.append(f"Темы: {', '.join(topics)}")
-
-    fired = _fired(hit)
-    if fired:
-        lines += ["", "Из чего сложилась оценка:"]
-        for key, value in fired:
-            weight = value.get("weight", 0)
-            sign = "+" if weight > 0 else ""
-            why = value.get("why", "")
-            lines.append(f"  {sign}{weight} · {why}" if why
-                         else f"  {sign}{weight} · {key}")
-
+    Молча пропустить нельзя: редактор не узнает о материале вовсе. Но и
+    выдавать это за пост нельзя — поэтому коротко: что нашли, где и почему
+    текста нет.
+    """
+    lines = ["⚠️ Пост не написался", "", hit.get("title", "без заголовка")]
     if hit.get("url"):
-        lines += ["", hit["url"]]
-
-    lines += ["", "Баллы — это очередь, а не разрешение публиковать."]
+        lines.append(hit["url"])
+    lines += ["", f"Причина: {reason}"]
     return "\n".join(lines)[:TELEGRAM_LIMIT]
 
 

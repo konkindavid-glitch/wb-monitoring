@@ -1,12 +1,12 @@
-"""Доставка в Telegram: срочные находки сразу, остальное дайджестом.
+"""Доставка в Telegram: готовый пост редактору, дайджест — отчётностью.
 
-Срочная находка уходит карточкой из monitoring/post.py — с обложкой и тремя
-кнопками решения. Отдельного формата для срочного здесь нет намеренно:
-две разные вёрстки одного и того же для одного и того же редактора неминуемо
-разъезжаются, что уже случилось с подключением к базе.
+Редактору уходит текст, слово в слово такой, каким он выйдет в канал:
+обложка отдельным сообщением, следом пост, на нём три кнопки решения.
+Служебных пометок в тексте нет — человек нажимает «Запостить» под тем,
+что прочитал.
 
-Дайджест — слой отчётности: список того, что ждёт в очереди. Кнопок в нём нет,
-решения принимаются на карточке.
+Дайджест — другой слой: список того, что ждёт в очереди. Кнопок в нём нет,
+решения принимаются на посте.
 
 Пустые тики не отправляются. Тридцать сообщений «нового нет» подряд приучают
 не открывать бота вернее, чем отсутствие мониторинга.
@@ -18,12 +18,6 @@ import httpx
 TELEGRAM_LIMIT = 4096
 API = "https://api.telegram.org/bot{token}/sendMessage"
 TIMEOUT = 20.0
-
-
-def _fired(hit: dict) -> list:
-    factors = hit.get("factors") or {}
-    return [(key, value["why"]) for key, value in factors.items()
-            if value.get("hit") and value.get("why")]
 
 
 def format_digest(hits: list, degraded: list, report: dict) -> str:
@@ -78,9 +72,9 @@ UPDATES_API = "https://api.telegram.org/bot{token}/getUpdates"
 WEBHOOK_INFO_API = "https://api.telegram.org/bot{token}/getWebhookInfo"
 ME_API = "https://api.telegram.org/bot{token}/getMe"
 
-# Подпись к фото ограничена 1024 символами, а не 4096, как текст сообщения.
-# Разбор по факторам в них не всегда влезает, поэтому длинная карточка уходит
-# отдельным сообщением — с кнопками именно на нём.
+# Предел подписи к фото — 1024 знака против 4096 у сообщения. Постом подпись
+# не используется (см. send_card), но правка сообщения с фото упирается
+# в этот предел, и обрезать надо по нему, иначе Телеграм отвергает правку.
 CAPTION_LIMIT = 1024
 
 
@@ -181,29 +175,24 @@ def _call(url: str, payload: dict, files: dict = None):
 
 def send_card(text: str, token: str, chat_id: str, *,
               cover: bytes = None, reply_markup: dict = None):
-    """Карточка: обложка сверху, текст, кнопки. Возвращает message_id или None.
+    """Обложка отдельным сообщением, следом текст. Возвращает message_id текста.
 
-    Кнопки всегда оказываются на сообщении с полным текстом: нажимать их,
-    не видя разбора по факторам, редактору не на чем.
+    Подписью к фото текст не идёт намеренно. Подпись ограничена 1024 знаками
+    против 4096 у сообщения, и пост, который в неё не влез, пришлось бы резать
+    или верстать двумя разными способами в зависимости от длины — читатель
+    видел бы то так, то эдак. Отдельные сообщения выглядят одинаково всегда.
+
+    Кнопки — на сообщении с текстом: решение принимается по тексту, а не
+    по картинке.
     """
     if not token or not chat_id:
         return None
-
-    markup = json.dumps(reply_markup) if reply_markup else None
-
-    if cover and len(text) <= CAPTION_LIMIT:
-        payload = {"chat_id": chat_id, "caption": text}
-        if markup:
-            payload["reply_markup"] = markup
-        result = _call(PHOTO_API.format(token=token), payload,
-                       files={"photo": ("cover.jpg", cover, "image/jpeg")})
-        return result.get("message_id") if result else None
 
     if cover:
         _call(PHOTO_API.format(token=token), {"chat_id": chat_id},
               files={"photo": ("cover.jpg", cover, "image/jpeg")})
 
-    payload = {"chat_id": chat_id, "text": text,
+    payload = {"chat_id": chat_id, "text": text[:TELEGRAM_LIMIT],
                "disable_web_page_preview": True}
     if reply_markup:
         payload["reply_markup"] = reply_markup

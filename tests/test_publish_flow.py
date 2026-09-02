@@ -32,6 +32,11 @@ class FakeRepo:
                                   "score": 130, "decision": "URGENT",
                                   "factors": {}, "platforms": [], "topics": []}}
 
+        self.saved_post = None
+
+    def save_post_text(self, hit_id, text):
+        self.saved_post = (hit_id, text)
+
     def save_decision(self, hit_id, action, chat_id, message_id=None,
                       prompt_message_id=None, editor_id=None):
         self.decisions.append((hit_id, action))
@@ -121,13 +126,12 @@ def test_publish_writes_a_post_and_sends_it_to_the_channel(monkeypatch):
     assert POST in tg.sent[0]["text"]
 
 
-def test_published_post_carries_the_source_link(monkeypatch):
-    """Ссылку дописывает код, а не модель: единственное место,
-    где её нельзя переврать."""
+def test_published_post_has_no_source_link(monkeypatch):
+    """Канал читают ради сути, а не ради перехода на отраслевой сайт."""
     tg = Telegram()
     tg.install(monkeypatch, env_channel="-1001234")
     app.handle_callback(press(PUBLISH), make_deps())
-    assert "https://x.invalid/wb" in tg.sent[0]["text"]
+    assert "https://x.invalid/wb" not in tg.sent[0]["text"]
 
 
 def test_post_goes_to_the_moderation_chat_when_no_channel_is_set(monkeypatch):
@@ -347,3 +351,73 @@ def test_refusal_reason_reaches_the_editor(monkeypatch):
 
     assert "not a member of the channel" in tg.edits[-1]["text"]
     assert tg.edits[-1]["reply_markup"] is not None
+
+
+# --- готовый пост уходит редактору, а не карточка с баллами -----------------
+
+def test_editor_receives_the_finished_post_not_a_score_card(monkeypatch):
+    """Иначе редактор нажимает «Запостить» под баллами, не видя текста,
+    который уйдёт в канал, — то есть одобряет то, чего не читал."""
+    tg = Telegram()
+    tg.install(monkeypatch, env_channel=None)
+    repo = FakeRepo()
+
+    app.deliver_card(repo.hits["hit_real"], make_deps(repo=repo))
+
+    assert tg.sent[0]["text"] == POST
+    assert "баллов" not in tg.sent[0]["text"]
+    assert "Из чего сложилась оценка" not in tg.sent[0]["text"]
+
+
+def test_delivered_post_is_stored_for_publication(monkeypatch):
+    """Публиковать надо ровно то, что одобрили: вторая генерация в момент
+    нажатия дала бы другой текст."""
+    tg = Telegram()
+    tg.install(monkeypatch, env_channel=None)
+    repo = FakeRepo()
+
+    app.deliver_card(repo.hits["hit_real"], make_deps(repo=repo))
+    assert repo.saved_post == ("hit_real", POST)
+
+
+def test_publication_uses_the_stored_text_without_rewriting(monkeypatch):
+    tg = Telegram()
+    tg.install(monkeypatch, env_channel="-1001234")
+    repo = FakeRepo()
+    repo.hits["hit_real"]["post_text"] = "Одобренный текст."
+
+    app.handle_callback(press(PUBLISH),
+                        make_deps(repo=repo, judge=FakeJudge("другой текст")))
+
+    assert tg.sent[0]["text"] == "Одобренный текст."
+
+
+def test_finding_without_a_post_is_still_reported(monkeypatch):
+    """Молча пропустить нельзя: редактор не узнает о материале вовсе."""
+    tg = Telegram()
+    tg.install(monkeypatch, env_channel=None)
+    repo = FakeRepo()
+
+    app.deliver_card(repo.hits["hit_real"],
+                     make_deps(repo=repo, fetcher=FakeFetcher("", 403)))
+
+    assert "не написался" in tg.sent[0]["text"]
+    assert "Wildberries меняет тариф хранения" in tg.sent[0]["text"]
+    assert repo.saved_post is None
+
+
+def test_cover_goes_separately_from_the_text(monkeypatch):
+    """Подпись к фото ограничена 1024 знаками против 4096 у сообщения:
+    вёрстка менялась бы в зависимости от длины поста."""
+    from monitoring import delivery
+
+    calls = []
+    monkeypatch.setattr(delivery, "_call",
+                        lambda url, payload, files=None: calls.append(
+                            (delivery._method(url), files is not None))
+                        or {"message_id": 1})
+
+    delivery.send_card("текст поста", "T", "100", cover=b"jpeg",
+                       reply_markup={"inline_keyboard": []})
+
+    assert calls == [("sendPhoto", True), ("sendMessage", False)]
