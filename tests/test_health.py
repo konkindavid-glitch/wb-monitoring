@@ -5,7 +5,7 @@ import app
 from monitoring.health import format_status
 
 GOOD = {
-    "build": "2026-09-02 · публикация постов",
+    "build": "2026-09-02 · разборы и рисованные обложки",
     "bot_username": "wb_monitor_bot",
     "webhook_url": "",
     "db_error": "",
