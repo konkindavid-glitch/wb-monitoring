@@ -310,6 +310,68 @@ class Repo:
                 return None
             return dict(zip([c.name for c in cur.description], row))
 
+    # --- разборы ----------------------------------------------------------
+
+    def explainer_done(self, slot: str) -> bool:
+        """Был ли уже разбор в этот выпуск сегодня."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM explainers "
+                " WHERE slot = %s AND produced_date = current_date", (slot,))
+            return cur.fetchone() is not None
+
+    def explainer_candidates(self, hours: int, limit: int = 5) -> list:
+        """Темы для разбора: весомое за окно, о чём ещё не говорили.
+
+        Порог по баллам не ставится: разбор — это не срочность, а польза,
+        и толковое объяснение правил вполне может вырасти из находки,
+        которая в срочные не прошла.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """SELECT hit_id, title, url, score, decision, platforms, topics
+                     FROM monitoring_hits
+                    WHERE discovered_at > now() - make_interval(hours => %s)
+                      AND decision <> 'DROP'
+                      AND hit_id NOT IN (SELECT hit_id FROM explainers)
+                    ORDER BY score DESC, discovered_at DESC
+                    LIMIT %s""", (hours, limit))
+            columns = [c.name for c in cur.description]
+            return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+    def related_hits(self, hit: dict, hours: int, limit: int = 6) -> list:
+        """Другие находки той же площадки за окно — материал для глубины.
+
+        Одна новость даёт повод, но не даёт инструкции: официальное
+        уведомление говорит, что меняется, а разбор отраслевого издания —
+        чем это грозит.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """SELECT hit_id, title, url
+                     FROM monitoring_hits
+                    WHERE discovered_at > now() - make_interval(hours => %s)
+                      AND hit_id <> %s
+                      AND platforms && %s
+                    ORDER BY score DESC
+                    LIMIT %s""",
+                (hours, hit.get("hit_id", ""),
+                 list(hit.get("platforms") or []), limit))
+            columns = [c.name for c in cur.description]
+            return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+    def save_explainer(self, hit_id: str, slot: str, topic: str,
+                       body: str) -> str:
+        explainer_id = _uid("exp")
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO explainers
+                       (explainer_id, hit_id, slot, topic, body)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (explainer_id, hit_id, slot, topic, body))
+        self.conn.commit()
+        return explainer_id
+
     # --- heartbeat --------------------------------------------------------
 
     def save_heartbeat(self, report: dict, run_id=None) -> None:

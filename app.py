@@ -18,7 +18,11 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+# time из datetime импортируется под псевдонимом: голое имя затирает
+# модуль time, и time.sleep с time.monotonic перестают существовать —
+# опрос кнопок падал с AttributeError.
+from datetime import datetime, timedelta, timezone
+from datetime import time as clock_time
 from pathlib import Path
 
 # line_buffering обязателен: в контейнере stdout идёт не в терминал, а в канал,
@@ -262,20 +266,45 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
     return report
 
 
+# Откуда берётся фон обложки:
+#   generated — рисует модель через OpenRouter, при отказе фото из статьи;
+#   photo     — только настоящее фото из статьи (og:image), бесплатно;
+#   off       — фирменная плашка, без внешних запросов.
+COVER_SOURCE = "generated"
+
+
+def cover_background(hit: dict, fetcher):
+    """(картинка, сгенерирована ли). Пустая картинка — будет плашка."""
+    mode = os.getenv("COVER_SOURCE", COVER_SOURCE).strip().lower()
+
+    if mode == "generated":
+        from monitoring.imagegen import generate
+        drawn = generate(hit)
+        if drawn:
+            return drawn, True
+
+    if mode in ("generated", "photo") and fetcher is not None and hit.get("url"):
+        from monitoring.cover import article_photo
+        return article_photo(hit["url"], fetcher), False
+
+    return b"", False
+
+
 def render_cover(hit: dict, fetcher=None):
     """Обложка или None.
 
-    Фон берётся из самой статьи (og:image): снимок относится к событию,
-    он бесплатен и всегда по теме. Не отдался — остаётся фирменная плашка.
-    Ни отсутствие шрифта, ни отсутствие Pillow, ни отсутствие картинки
-    не отменяют доставку: текст важнее обложки.
+    Фон рисует модель, а заголовок наносится своим шрифтом поверх: кириллицу
+    модели изображений пишут с ошибками, да и надпись обязана совпадать
+    с заголовком материала, а не быть его пересказом.
+
+    Не нарисовалось — берётся настоящее фото из статьи, нет и его — остаётся
+    фирменная плашка. Ни отсутствие шрифта, ни отсутствие Pillow, ни отказ
+    генератора не отменяют доставку: текст важнее обложки.
     """
     try:
-        from monitoring.cover import article_photo, render
-        photo = b""
-        if fetcher is not None and hit.get("url"):
-            photo = article_photo(hit["url"], fetcher)
-        return render(hit, photo)
+        from monitoring.cover import render
+        background, generated = cover_background(hit, fetcher)
+        return render(hit, background, generated=generated)
     except ImportError:
         print("[degraded] Pillow не установлен — карточки уходят без обложки")
     except Exception as exc:
@@ -292,6 +321,87 @@ def deliver_card(hit: dict, deps, is_test: bool = False) -> bool:
         format_card(hit, is_test=is_test), deps.token, deps.chat_id,
         cover=render_cover(hit, deps.fetcher),
         reply_markup=keyboard(hit.get("hit_id", "hit_sample")))
+    return message_id is not None
+
+
+# --- разборы ---------------------------------------------------------------
+
+# Два выпуска в день по московскому времени. Утром — чтобы продавец успел
+# отреагировать в рабочий день, вечером — чтобы прочитал, когда есть время.
+EXPLAINER_TIMES = "10:00,18:00"
+EXPLAINER_WINDOW_HOURS = 72
+MOSCOW_OFFSET = timedelta(hours=3)
+
+
+def explainer_slots() -> list:
+    raw = os.getenv("EXPLAINER_TIMES", EXPLAINER_TIMES)
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def due_slot(now: datetime, slots: list) -> str:
+    """Последний наступивший выпуск за сегодня или пусто.
+
+    Берётся именно последний, а не первый: если контейнер пролежал до вечера,
+    выпускать утренний разбор в 18:20 незачем — он уже неактуален.
+    """
+    local = (now + MOSCOW_OFFSET).time()
+    passed = [s for s in slots if _as_time(s) and _as_time(s) <= local]
+    return passed[-1] if passed else ""
+
+
+def _as_time(value: str):
+    try:
+        hours, minutes = value.split(":")
+        return clock_time(int(hours), int(minutes))
+    except (ValueError, AttributeError):
+        return None
+
+
+def build_explainer(deps, slot: str):
+    """Готовит разбор к выпуску. Возвращает (находка, текст) или (None, причина).
+
+    Тема — самое весомое за окно, о чём ещё не говорили. Материалы —
+    сама статья плюс другие находки той же площадки: одна новость даёт
+    повод, но не даёт инструкции.
+    """
+    from monitoring.explainer import gather_sources, write_explainer
+
+    candidates = deps.repo.explainer_candidates(EXPLAINER_WINDOW_HOURS)
+    if not candidates:
+        return None, "нет свежих тем для разбора"
+
+    for hit in candidates:
+        materials = []
+        for source in [hit] + deps.repo.related_hits(hit, EXPLAINER_WINDOW_HOURS):
+            text = article_text(source.get("url") or "", deps.fetcher)
+            if text:
+                materials.append({"title": source.get("title", ""),
+                                  "url": source.get("url", ""), "text": text})
+
+        written = write_explainer(hit.get("title", ""), gather_sources(materials),
+                                  deps.writer or deps.judge)
+        if written:
+            return hit, written.text
+        print(f"[explainer] {hit.get('hit_id')}: {written.reason}")
+
+    return None, "ни по одной теме разбор не собрался"
+
+
+def run_explainer(deps, slot: str) -> bool:
+    """Выпускает разбор: пишет, сохраняет, отдаёт редактору с кнопками."""
+    hit, result = build_explainer(deps, slot)
+    if hit is None:
+        print(f"[explainer] выпуск {slot} пропущен: {result}")
+        return False
+
+    deps.repo.save_explainer(hit["hit_id"], slot, hit.get("title", ""), result)
+
+    card = "\n\n".join([f"📚 РАЗБОР · выпуск {slot}", result])
+    message_id = send_card(card, deps.token, deps.chat_id,
+                           cover=render_cover(hit, deps.fetcher),
+                           reply_markup=keyboard(hit["hit_id"]))
+    print(f"[explainer] выпуск {slot}: {hit['hit_id']}, "
+          f"{len(result)} знаков, отправлен: {message_id is not None}")
     return message_id is not None
 
 
@@ -997,6 +1107,19 @@ def main():
             run_heartbeat(deps, state, now)
         except Exception as exc:
             print(f"[fail] heartbeat: {exc}")
+            if hasattr(deps.repo, "rollback"):
+                deps.repo.rollback()
+
+        # Разбор проверяется каждый круг, а не по таймеру: контейнер
+        # перезапускается при каждой сборке, и таймер в памяти сбрасывался бы
+        # вместе с ним. Отметка о выпуске лежит в базе, поэтому пересборка
+        # в 10:05 не приводит ко второму утреннему разбору.
+        try:
+            slot = due_slot(now, explainer_slots())
+            if slot and not deps.repo.explainer_done(slot):
+                run_explainer(deps, slot)
+        except Exception as exc:
+            print(f"[fail] разбор: {exc}")
             if hasattr(deps.repo, "rollback"):
                 deps.repo.rollback()
 

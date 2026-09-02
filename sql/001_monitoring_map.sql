@@ -321,4 +321,26 @@ CREATE INDEX IF NOT EXISTS idx_moderationdec_2
     ON moderation_decisions (prompt_message_id)
     WHERE prompt_message_id IS NOT NULL;
 
+-- ---------------------------------------------------------------------------
+--  10. РАЗБОРЫ
+--  Длинный пост-объяснение по одной теме, дважды в день.
+-- ---------------------------------------------------------------------------
+
+-- Внешнего ключа на monitoring_hits нет по той же причине, что и у журнала
+-- решений: разбор переживает чистку находок, а по нему видно, о чём канал
+-- уже говорил. Без этой памяти одна и та же тема разбиралась бы каждый день.
+CREATE TABLE IF NOT EXISTS explainers (
+    explainer_id  text PRIMARY KEY,
+    hit_id        text NOT NULL,
+    slot          text NOT NULL,          -- время выпуска, например 10:00
+    topic         text NOT NULL,
+    body          text NOT NULL,
+    produced_at   timestamptz NOT NULL DEFAULT now(),
+    produced_date date NOT NULL DEFAULT current_date
+);
+CREATE INDEX IF NOT EXISTS idx_explainers_1
+    ON explainers (produced_date DESC, slot);
+CREATE INDEX IF NOT EXISTS idx_explainers_2
+    ON explainers (hit_id);
+
 COMMIT;

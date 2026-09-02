@@ -212,7 +212,7 @@ def _badge(draw, xy, text, font, accent):
     return height
 
 
-def render(hit: dict, photo: bytes = None):
+def render(hit: dict, photo: bytes = None, generated: bool = False):
     """Обложка в PNG или None, если подходящего шрифта нет.
 
     None вместо исключения намеренно: отсутствие шрифта не повод не доставить
@@ -275,8 +275,11 @@ def render(hit: dict, photo: bytes = None):
     draw.text((MARGIN + 26, baseline), style["label"], font=small_font,
               fill=(255, 255, 255))
 
-    width = draw.textlength(BRAND, font=small_font)
-    draw.text((WIDTH - MARGIN - width, baseline), BRAND, font=small_font,
+    # Пометка обязательна: выдуманное изображение, поданное как снимок
+    # с места события, — подлог, даже когда сюжет безобидный.
+    right = BRAND if not generated else "изображение сгенерировано"
+    width = draw.textlength(right, font=small_font)
+    draw.text((WIDTH - MARGIN - width, baseline), right, font=small_font,
               fill=(190, 190, 200))
 
     buffer = io.BytesIO()

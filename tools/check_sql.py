@@ -65,9 +65,9 @@ expected_tables = {
     "monitoring_topics", "monitoring_platforms", "monitoring_signals",
     "monitoring_queries", "monitoring_runs", "monitoring_hits",
     "stop_rule_drops", "heartbeat_reports", "triage_transitions",
-    "moderation_decisions",
+    "moderation_decisions", "explainers",
 }
-check("all 10 tables declared", tables == expected_tables,
+check("all 11 tables declared", tables == expected_tables,
       "missing: %s / unexpected: %s"
       % (sorted(expected_tables - tables), sorted(tables - expected_tables)))
 
@@ -122,7 +122,7 @@ bare_indexes = len(re.findall(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+ON\s", sql_text, 
 
 check("all 6 enum types are guarded against re-creation", guarded_types == 6,
       "%d guarded" % guarded_types)
-check("all 10 tables use IF NOT EXISTS", guarded_tables == 10,
+check("all 11 tables use IF NOT EXISTS", guarded_tables == 11,
       "%d guarded, %d bare" % (guarded_tables, bare_tables))
 check("no unnamed indexes (IF NOT EXISTS needs explicit names)",
       bare_indexes == 0, "%d bare" % bare_indexes)
