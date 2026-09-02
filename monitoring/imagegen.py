@@ -33,7 +33,11 @@ import re
 # а он здесь копеечный.
 MODELS = ["openai/gpt-5-image-mini", "google/gemini-2.5-flash-image"]
 MODEL = MODELS[0]
-URL = "https://openrouter.ai/api/v1/chat/completions"
+# Отдельная точка для картинок, а не chat/completions. Через чат запрос
+# уходил, но картинку оттуда было не достать: та ручка отдаёт изображение
+# внутри сообщения, а эта — полем b64_json. Обложки всё это время молча
+# собирались запасным путём, фирменной плашкой.
+URL = "https://openrouter.ai/api/v1/images"
 TIMEOUT = 120.0
 
 _DATA_URI = re.compile(r"data:image/(?:png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)")
@@ -104,11 +108,23 @@ def build_prompt(hit: dict) -> str:
 def extract_image(payload: dict) -> bytes:
     """Картинка из ответа OpenRouter. Пусто, если её там нет.
 
-    Разные модели кладут её по-разному — в message.images, в content
-    или в отдельное поле. Поэтому ищется data-URI в тексте всего ответа:
-    ловить конкретную форму значило бы ломаться при смене модели.
+    Основная форма — data[].b64_json, голый base64 без префикса. Именно
+    на этом всё и ломалось: искался только data-URI, а его в ответе нет.
+
+    Поиск data-URI оставлен вторым заходом: так отвечают модели через
+    chat/completions, и если какая-то из них пойдёт этим путём, картинка
+    всё равно найдётся. Ловить одну форму значило бы ломаться при смене
+    модели — на что я уже напоролся.
     """
     import json
+
+    for item in (payload or {}).get("data") or []:
+        raw = (item or {}).get("b64_json")
+        if raw:
+            try:
+                return base64.b64decode(raw)
+            except Exception:
+                pass
 
     found = _DATA_URI.search(json.dumps(payload))
     if not found:
@@ -146,9 +162,7 @@ def generate(hit: dict, client=None) -> bytes:
                          "Content-Type": "application/json",
                          "HTTP-Referer": "https://amvera.ru",
                          "X-Title": "Monitoring Map"},
-                json={"model": model,
-                      "modalities": ["image", "text"],
-                      "messages": [{"role": "user", "content": prompt}]})
+                json={"model": model, "prompt": prompt})
         except Exception as exc:
             print(f"[cover] {model} недоступна: {exc}")
             continue
@@ -158,9 +172,14 @@ def generate(hit: dict, client=None) -> bytes:
                   f"{response.text[:200]}")
             continue
 
-        image = extract_image(response.json())
+        payload = response.json()
+        image = extract_image(payload)
         if image:
-            print(f"[cover] нарисовала {model}")
+            # Стоимость в ответе есть — печатаем её: расход на картинки
+            # иначе виден только в личном кабинете, и то задним числом.
+            cost = (payload.get("usage") or {}).get("cost")
+            print(f"[cover] нарисовала {model}, {len(image)} байт"
+                  + (f", ${cost}" if cost is not None else ""))
             return image
         # Успешный ответ без картинки — модель не умеет её отдавать через
         # chat/completions. Это не сбой связи, а неподходящая модель,

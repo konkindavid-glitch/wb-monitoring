@@ -14,9 +14,8 @@ PIXEL = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode()
 class Client:
     def __init__(self, payload=None, status=200):
         self.payload = payload if payload is not None else {
-            "choices": [{"message": {
-                "images": [{"image_url": {"url": f"data:image/png;base64,{PIXEL}"}}]
-            }}]}
+            "data": [{"b64_json": PIXEL, "media_type": "image/png"}],
+            "usage": {"cost": 0.01}}
         self.status_code = status
         self.sent = {}
         self.models = []
@@ -90,6 +89,7 @@ def test_image_is_found_wherever_the_model_puts_it():
 
 
 def test_answer_without_an_image_yields_nothing():
+    assert imagegen.extract_image({"data": []}) == b""
     assert imagegen.extract_image({"choices": [{"message": {"content": "нет"}}]}) == b""
 
 
@@ -184,8 +184,7 @@ class Chain:
     def post(self, url, headers=None, json=None):
         self.models.append(json["model"])
         self._payload = (self.first_payload if len(self.models) == 1 else {
-            "choices": [{"message": {"content":
-                                     f"data:image/png;base64,{PIXEL}"}}]})
+            "data": [{"b64_json": PIXEL}]})
         return self
 
     def json(self):
@@ -211,7 +210,7 @@ def test_second_model_covers_for_the_first(monkeypatch):
     картинку через chat/completions, посты не должны остаться без обложек."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
     monkeypatch.delenv("IMAGE_MODEL", raising=False)
-    client = Chain({"choices": [{"message": {"content": "картинки нет"}}]})
+    client = Chain({"data": []})
 
     assert imagegen.generate(HIT, client) == base64.b64decode(PIXEL)
     assert client.models == ["openai/gpt-5-image-mini",
@@ -237,3 +236,24 @@ def test_lite_gemini_is_not_used_because_it_costs_the_same():
     """«Lite» из семейства Gemini стоит за картинку столько же, сколько
     обычная Nano Banana: экономии нет, только имя меньше."""
     assert not any("lite" in model for model in imagegen.MODELS)
+
+
+def test_request_goes_to_the_images_endpoint(monkeypatch):
+    """Через chat/completions запрос уходил, но картинку оттуда было
+    не достать — обложки молча собирались плашкой."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.delenv("IMAGE_MODEL", raising=False)
+    client = Client()
+    imagegen.generate(HIT, client)
+
+    assert client.sent["url"].endswith("/api/v1/images")
+    assert set(client.sent["json"]) == {"model", "prompt"}
+
+
+def test_cost_is_reported(monkeypatch, capsys):
+    """Расход на картинки иначе виден только в личном кабинете,
+    и то задним числом."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-test")
+    monkeypatch.delenv("IMAGE_MODEL", raising=False)
+    imagegen.generate(HIT, Client())
+    assert "$0.01" in capsys.readouterr().out
