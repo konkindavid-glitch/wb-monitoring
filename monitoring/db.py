@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import NamedTuple
 from uuid import uuid4
 
-import psycopg
+# Импорт отложен: без него модуль не читался без установленного драйвера,
+# а разбор массивов и прочая чистая логика тестируются и на машине
+# разработки, где psycopg нет. Именно там и жила ошибка с «{».
+def _psycopg():
+    import psycopg
+    return psycopg
+
 
 
 def open_connection(dsn: str = None, **parts):
@@ -20,8 +26,9 @@ def open_connection(dsn: str = None, **parts):
     Ошибка при этом приходит не в момент подключения, а на первой же операции —
     «the connection is closed», — и выглядит как проблема сети.
     """
-    return psycopg.connect(dsn, autocommit=False) if dsn \
-        else psycopg.connect(autocommit=False, **parts)
+    driver = _psycopg()
+    return driver.connect(dsn, autocommit=False) if dsn \
+        else driver.connect(autocommit=False, **parts)
 
 
 @contextmanager
@@ -34,8 +41,9 @@ def connect(dsn: str = None, **parts):
     сбой парсера, а не как «поправьте пароль». Отдельные параметры
     экранирования не требуют вовсе.
     """
-    conn = psycopg.connect(dsn, autocommit=False) if dsn \
-        else psycopg.connect(autocommit=False, **parts)
+    driver = _psycopg()
+    conn = driver.connect(dsn, autocommit=False) if dsn \
+        else driver.connect(autocommit=False, **parts)
     try:
         yield conn
         conn.commit()
@@ -65,6 +73,40 @@ def apply_migration(conn, sql_path: Path) -> None:
             cur.execute(sql)
     finally:
         conn.autocommit = previous
+
+
+# Колонки-массивы. Драйвер отдаёт массив перечисления строкой «{A,B}»,
+# потому что адаптера для monitoring_platform[] у него нет. Без разбора
+# list() резал такую строку посимвольно: в запрос уходил массив из «{», «W»,
+# «I»… и Postgres отвечал invalid input value for enum: "{". Та же строка
+# ломала выбор цвета обложки — platforms[0] был «{», и площадка всегда
+# падала в запасной стиль.
+ARRAY_COLUMNS = ("platforms", "topics", "categories")
+
+
+def as_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        # Postgres берёт элемент в кавычки, если в нём есть запятая или
+        # пробел. Для перечислений такого не бывает, но полагаться на это
+        # нельзя: topics — обычный text[], и там кавычки возможны.
+        parts = (part.strip().strip('"') for part in value.strip("{}").split(","))
+        return [part for part in parts if part]
+    return list(value)
+
+
+def rows_to_dicts(cur) -> list:
+    """Строки курсора словарями, с разобранными массивами."""
+    columns = [c.name for c in cur.description]
+    out = []
+    for row in cur.fetchall():
+        item = dict(zip(columns, row))
+        for column in ARRAY_COLUMNS:
+            if column in item:
+                item[column] = as_list(item[column])
+        out.append(item)
+    return out
 
 
 def _uid(prefix: str) -> str:
@@ -217,8 +259,7 @@ class Repo:
                     ORDER BY score DESC, discovered_at
                     LIMIT %s""",
                 (list(decisions), limit))
-            columns = [c.name for c in cur.description]
-            return [dict(zip(columns, row)) for row in cur.fetchall()]
+            return rows_to_dicts(cur)
 
     def pending_urgent(self) -> list:
         return self._pending(("URGENT",), 20)
@@ -305,10 +346,8 @@ class Repo:
                 """SELECT hit_id, title, url, score, decision, factors,
                           platforms, topics
                      FROM monitoring_hits WHERE hit_id = %s""", (hit_id,))
-            row = cur.fetchone()
-            if not row:
-                return None
-            return dict(zip([c.name for c in cur.description], row))
+            found = rows_to_dicts(cur)
+            return found[0] if found else None
 
     # --- разборы ----------------------------------------------------------
 
@@ -343,8 +382,7 @@ class Repo:
                       AND hit_id NOT IN (SELECT hit_id FROM explainers)
                     ORDER BY score DESC, discovered_at DESC
                     LIMIT %s""", (hours, limit))
-            columns = [c.name for c in cur.description]
-            return [dict(zip(columns, row)) for row in cur.fetchall()]
+            return rows_to_dicts(cur)
 
     def related_hits(self, hit: dict, hours: int, limit: int = 6) -> list:
         """Другие находки той же площадки за окно — материал для глубины.
@@ -358,7 +396,7 @@ class Repo:
         и падает на первой же скобке: invalid input value for enum
         monitoring_platform: "{".
         """
-        platforms = list(hit.get("platforms") or [])
+        platforms = as_list(hit.get("platforms"))
         if not platforms:
             return []
 
@@ -372,8 +410,7 @@ class Repo:
                     ORDER BY score DESC
                     LIMIT %s""",
                 (hours, hit.get("hit_id", ""), platforms, limit))
-            columns = [c.name for c in cur.description]
-            return [dict(zip(columns, row)) for row in cur.fetchall()]
+            return rows_to_dicts(cur)
 
     def save_explainer(self, hit_id: str, slot: str, topic: str,
                        body: str) -> str:
