@@ -122,3 +122,33 @@ def test_explainer_fits_a_telegram_message():
     client = Client("я" * 9000)
     result = write_explainer("GTIN", gather_sources(MATERIALS), client)
     assert len(result.text) <= MAX_LENGTH == 4096
+
+
+# --- частота попыток --------------------------------------------------------
+
+def test_first_attempt_is_allowed(monkeypatch):
+    monkeypatch.setattr(app, "_EXPLAINER_TRIED", {})
+    assert app.explainer_attempt_due("10:00", moscow(11))
+
+
+def test_attempt_is_not_repeated_every_minute(monkeypatch):
+    """Первый выпуск за час сделал полсотни одинаковых записей «нет тем»."""
+    monkeypatch.setattr(app, "_EXPLAINER_TRIED", {"10:00": moscow(11)})
+    assert not app.explainer_attempt_due("10:00", moscow(11, 5))
+
+
+def test_attempt_is_retried_later_because_a_topic_may_appear(monkeypatch):
+    """Пропуск не окончателен: подходящая тема может появиться днём."""
+    monkeypatch.setattr(app, "_EXPLAINER_TRIED", {"10:00": moscow(11)})
+    assert app.explainer_attempt_due("10:00", moscow(11, 31))
+
+
+def test_slots_are_throttled_independently(monkeypatch):
+    monkeypatch.setattr(app, "_EXPLAINER_TRIED", {"10:00": moscow(11)})
+    assert app.explainer_attempt_due("18:00", moscow(11, 5))
+
+
+def test_window_is_wide_enough_for_rules_topics():
+    """Разбор про правила не протухает за трое суток, а весомых тем
+    за такое окно может не набраться вовсе — что и случилось."""
+    assert app.EXPLAINER_WINDOW_HOURS >= 168

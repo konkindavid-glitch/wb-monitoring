@@ -329,7 +329,16 @@ def deliver_card(hit: dict, deps, is_test: bool = False) -> bool:
 # Два выпуска в день по московскому времени. Утром — чтобы продавец успел
 # отреагировать в рабочий день, вечером — чтобы прочитал, когда есть время.
 EXPLAINER_TIMES = "10:00,18:00"
-EXPLAINER_WINDOW_HOURS = 72
+# Неделя, а не трое суток: разбор про правила не протухает за 72 часа,
+# а весомых тем за трое суток может не набраться вовсе — что и случилось
+# на первом же выпуске.
+EXPLAINER_WINDOW_HOURS = 168
+
+# Между попытками собрать разбор. Тема может появиться позже в тот же день,
+# поэтому пропуск не окончателен, но повторять каждую минуту незачем:
+# первый выпуск сделал полсотни одинаковых записей в лог за час.
+EXPLAINER_RETRY_MINUTES = 30
+_EXPLAINER_TRIED = {}
 MOSCOW_OFFSET = timedelta(hours=3)
 
 
@@ -357,6 +366,17 @@ def _as_time(value: str):
         return None
 
 
+def explainer_attempt_due(slot: str, now: datetime) -> bool:
+    """Пора ли пробовать собрать разбор.
+
+    Пропуск не окончателен: подходящая тема может появиться позже в тот же
+    день. Но повторять каждый круг цикла незачем — первый выпуск за час
+    сделал полсотни одинаковых записей «нет тем».
+    """
+    last = _EXPLAINER_TRIED.get(slot)
+    return last is None or         (now - last).total_seconds() >= EXPLAINER_RETRY_MINUTES * 60
+
+
 def build_explainer(deps, slot: str):
     """Готовит разбор к выпуску. Возвращает (находка, текст) или (None, причина).
 
@@ -368,7 +388,8 @@ def build_explainer(deps, slot: str):
 
     candidates = deps.repo.explainer_candidates(EXPLAINER_WINDOW_HOURS)
     if not candidates:
-        return None, "нет свежих тем для разбора"
+        return None, (f"нет тем: за {EXPLAINER_WINDOW_HOURS} ч не нашлось "
+                      f"находок выше порога, о которых ещё не говорили")
 
     for hit in candidates:
         materials = []
@@ -1116,7 +1137,8 @@ def main():
         # в 10:05 не приводит ко второму утреннему разбору.
         try:
             slot = due_slot(now, explainer_slots())
-            if slot and not deps.repo.explainer_done(slot):
+            if slot and explainer_attempt_due(slot, now)                     and not deps.repo.explainer_done(slot):
+                _EXPLAINER_TRIED[slot] = now
                 run_explainer(deps, slot)
         except Exception as exc:
             print(f"[fail] разбор: {exc}")
