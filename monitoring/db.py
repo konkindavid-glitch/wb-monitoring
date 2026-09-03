@@ -379,6 +379,73 @@ class Repo:
             found = rows_to_dicts(cur)
             return found[0] if found else None
 
+    # --- пересчёт ---------------------------------------------------------
+
+    def band_counts(self) -> dict:
+        """Сколько находок в каждой полосе. Без этого «постов нет» неотличимо
+        от «нечему уходить»: первое чинят кодом, второе — источниками."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """SELECT COALESCE(decision::text, 'без оценки') AS band,
+                          count(*) AS n
+                     FROM monitoring_hits
+                    GROUP BY 1 ORDER BY 2 DESC""")
+            return {row[0]: row[1] for row in cur.fetchall()}
+
+    def hits_to_rescore(self, hours: int, limit: int) -> list:
+        """Отброшенные находки, которые стоит пересчитать.
+
+        Корпус набирался, пока классификатор был недоступен: без семи
+        факторов из четырнадцати потолок — 65 из 160, а со штрафом −50
+        за отсутствие подтверждения почти всё уходило в DROP. Эти находки
+        не плохи — они не размечены, и заново их не соберёт никто:
+        is_known не пустит те же адреса во второй раз.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """SELECT hit_id, url, url_hash, title, excerpt, source_key,
+                          source_tier, platforms, topics, discovered_at,
+                          published_at
+                     FROM monitoring_hits
+                    WHERE decision = 'DROP'
+                      AND discovered_at > now() - make_interval(hours => %s)
+                      AND handed_off_at IS NULL
+                    ORDER BY discovered_at DESC
+                    LIMIT %s""", (hours, limit))
+            return rows_to_dicts(cur)
+
+    def update_score(self, hit_id: str, result, reason: str) -> None:
+        """Новая оценка находки с записью перехода.
+
+        Переход пишется всегда: по нему видно, что полоса сменилась
+        не сама собой, а из-за пересчёта.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT score, decision FROM monitoring_hits "
+                        " WHERE hit_id = %s", (hit_id,))
+            row = cur.fetchone()
+            old_score, old_decision = (row or (None, None))
+
+            cur.execute(
+                """UPDATE monitoring_hits
+                      SET score = %s, factors = %s, decision = %s,
+                          drop_reason = CASE WHEN %s = 'DROP'
+                                             THEN COALESCE(drop_reason, %s)
+                                             ELSE NULL END,
+                          updated_at = now()
+                    WHERE hit_id = %s""",
+                (result.score,
+                 json.dumps(result.factors, ensure_ascii=False), result.decision,
+                 result.decision, reason, hit_id))
+            cur.execute(
+                """INSERT INTO triage_transitions
+                       (transition_id, hit_id, from_decision, to_decision,
+                        from_score, to_score, reason)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (_uid("tr"), hit_id, old_decision, result.decision,
+                 old_score, result.score, reason))
+        self.conn.commit()
+
     # --- разборы ----------------------------------------------------------
 
     def explainer_done(self, slot: str) -> bool:

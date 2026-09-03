@@ -757,9 +757,23 @@ def handle_message(message: dict, deps) -> None:
     text = (message.get("text") or "").strip()
     chat_id = str((message.get("chat") or {}).get("id", deps.chat_id))
 
-    if text.lower().lstrip("/").split("@")[0] in STATUS_COMMANDS:
+    command = text.lower().lstrip("/").split("@")[0]
+
+    if command in STATUS_COMMANDS:
         send(format_status(collect_status(deps)), deps.token, chat_id)
         print("[moderation] запрошено состояние")
+        return
+
+    if command in RESCORE_COMMANDS:
+        send("Пересчитываю, это займёт до минуты…", deps.token, chat_id)
+        try:
+            report = rescore(deps)
+        except Exception as exc:
+            report = f"Пересчёт сорвался: {exc}"
+            if hasattr(deps.repo, "rollback"):
+                deps.repo.rollback()
+        send(report, deps.token, chat_id)
+        print(f"[rescore] {report}")
         return
 
     reply_to = (message.get("reply_to_message") or {}).get("message_id")
@@ -780,6 +794,78 @@ def handle_message(message: dict, deps) -> None:
     print(f"[moderation] правка · {hit_id}")
 
 
+# --- пересчёт корпуса -------------------------------------------------------
+
+# Сколько находок пересчитывать за одно нажатие. Пересчёт стоит денег:
+# классификатор берёт около $0,0007 за материал, сотня — семь центов.
+# Поэтому команда ручная и с потолком, а не фоновая задача, которая
+# однажды съест бюджет молча.
+RESCORE_LIMIT = 100
+RESCORE_WINDOW_HOURS = 336
+
+
+def rescore(deps, limit: int = RESCORE_LIMIT) -> str:
+    """Пересчитывает отброшенные находки заново. Возвращает отчёт для чата.
+
+    Корпус набирался, пока классификатор был недоступен: без семи факторов
+    из четырнадцати потолок 65 из 160, а со штрафом −50 за отсутствие
+    подтверждения почти всё уходило в DROP. Эти находки не плохи — они
+    не размечены, и сами собой не вернутся: is_known не пустит те же
+    адреса во второй раз.
+    """
+    from monitoring.models import SourceItem
+
+    client = deps.judge
+    if client is None:
+        return "Пересчёт невозможен: нет ключа модели."
+
+    rows = deps.repo.hits_to_rescore(RESCORE_WINDOW_HOURS, limit)
+    if not rows:
+        return "Пересчитывать нечего: отброшенных находок за две недели нет."
+
+    items, by_hash = [], {}
+    for row in rows:
+        item = SourceItem(
+            source_key=row.get("source_key") or "",
+            url=row.get("url") or "",
+            url_hash=row.get("url_hash") or "",
+            title=row.get("title") or "",
+            body=row.get("excerpt") or row.get("title") or "",
+            discovered_at=row.get("discovered_at"),
+            published_at=row.get("published_at"),
+            tier=row.get("source_tier") or "T3",
+            platform=(row.get("platforms") or ["CROSS_PLATFORM"])[0],
+            topics=tuple(row.get("topics") or ()))
+        items.append(item)
+        by_hash[item.url_hash] = row["hit_id"]
+
+    stats = {}
+    judged = judgment_factors(items, client, batch_size=BATCH_SIZE, stats=stats)
+    if stats.get("failed"):
+        return f"Классификатор не ответил: {stats.get('error')}"
+
+    weights = deps.cfg.factor_weights()
+    thresholds = deps.cfg.thresholds()
+    moved = {}
+    for item in items:
+        fired = mechanical_factors(item, deps.cfg, known_urls=set(),
+                                   independent_sources=count_independent_sources(
+                                       item, items))
+        fired.update(judged.get(item.url_hash, {}))
+        result = score_item(fired, weights, thresholds)
+        if result.decision == "DROP":
+            continue
+        deps.repo.update_score(by_hash[item.url_hash], result,
+                               "пересчёт с работающим классификатором")
+        moved[result.decision] = moved.get(result.decision, 0) + 1
+
+    if not moved:
+        return (f"Пересчитано {len(items)}, выше порога не поднялась "
+                f"ни одна. Дело не в разметке — нужны источники.")
+    detail = ", ".join(f"{band} {count}" for band, count in sorted(moved.items()))
+    return f"Пересчитано {len(items)}, поднялось: {detail}."
+
+
 # --- состояние по запросу ---------------------------------------------------
 
 # Отметка сборки. Если бот отвечает на команду и показывает эту строку,
@@ -788,6 +874,7 @@ def handle_message(message: dict, deps) -> None:
 BUILD = "2026-09-02 · разборы и рисованные обложки"
 
 STATUS_COMMANDS = {"статус", "status", "диагностика", "ping"}
+RESCORE_COMMANDS = {"пересчёт", "пересчет", "rescore"}
 
 # Счётчик обработанных нажатий: отличает «кнопку не нажимали» от
 # «нажатие пришло, но результат не дошёл».
@@ -856,6 +943,7 @@ def collect_status(deps) -> dict:
     else:
         try:
             deps.repo.degraded_sources()
+            facts["bands"] = deps.repo.band_counts()
             facts["db_error"] = ""
         except Exception as exc:
             facts["db_error"] = str(exc)[:200]

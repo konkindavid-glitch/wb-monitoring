@@ -47,6 +47,14 @@ def format_status(facts: dict) -> str:
         True, "канал",
         channel if channel else "не задан — посты приходят сюда"))
 
+    bands = facts.get("bands")
+    if bands:
+        # Без этого «постов нет» неотличимо от «нечему уходить»: первое
+        # чинят кодом, второе — источниками.
+        lines.append(_line(
+            any(bands.get(b) for b in ("URGENT", "QUEUE")), "находки",
+            ", ".join(f"{band} {count}" for band, count in bands.items())))
+
     tick = facts.get("last_tick")
     lines.append(_line(bool(tick), "последний сбор",
                        tick or "ещё не было с момента запуска"))

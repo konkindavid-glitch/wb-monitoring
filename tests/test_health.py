@@ -118,3 +118,16 @@ def test_collect_status_survives_a_dead_database(monkeypatch):
 
     facts = app.collect_status(app.Deps(cfg=None, repo=Dead(), token="T"))
     assert "connection refused" in facts["db_error"]
+
+
+def test_band_counts_show_whether_there_is_anything_to_send():
+    """«Постов нет» неотличимо от «нечему уходить»: первое чинят кодом,
+    второе — источниками."""
+    text = format_status(dict(GOOD, bands={"DROP": 480, "BACKLOG": 12}))
+    assert "DROP 480" in text
+    assert "⚠️ находки" in text
+
+
+def test_bands_with_queue_are_reported_as_fine():
+    text = format_status(dict(GOOD, bands={"QUEUE": 3, "DROP": 480}))
+    assert "✅ находки" in text
