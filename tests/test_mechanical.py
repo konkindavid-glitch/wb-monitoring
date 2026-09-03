@@ -74,3 +74,46 @@ def test_every_returned_key_is_a_real_factor_with_rationale():
                  title="Нейросеть для карточек"), sources=2)
     assert set(got) <= set(CFG.factor_weights())
     assert all(v and v.strip() for v in got.values())
+
+
+# --- кому полагается штраф за неподтверждённость ----------------------------
+
+def item_from(tier, **kw):
+    from datetime import datetime, timezone
+    from monitoring.models import SourceItem
+    return SourceItem(source_key="s", url="https://x.invalid/1", url_hash="h",
+                      title="Wildberries меняет тариф хранения",
+                      body="Ставка вырастет с 3 сентября.",
+                      discovered_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+                      tier=tier, **kw)
+
+
+def fired_for(tier, sources=1):
+    return mechanical_factors(item_from(tier), None, known_urls=set(),
+                              independent_sources=sources)
+
+
+def test_trade_media_gets_neither_bonus_nor_penalty():
+    """Публикация в отраслевом издании с редактурой — не слух. На боевых
+    данных −50 доставался каждой находке: 175 из 176 ушли в DROP."""
+    for tier in ("T2", "T3"):
+        fired = fired_for(tier)
+        assert "no_confirmation" not in fired, tier
+        assert "authoritative_source" not in fired, tier
+
+
+def test_official_feed_is_authoritative():
+    """Первоисточник подтверждать нечем и незачем."""
+    assert "authoritative_source" in fired_for("T1")
+    assert "no_confirmation" not in fired_for("T1")
+
+
+def test_unverified_sources_still_pay_the_penalty():
+    """Штраф задуман против слухов — соцсети, форумы, блоги."""
+    for tier in ("T4", "T5", "T6"):
+        assert "no_confirmation" in fired_for(tier), tier
+
+
+def test_confirmation_removes_the_penalty_for_unverified():
+    """Одна и та же новость из двух независимых источников — уже не слух."""
+    assert "no_confirmation" not in fired_for("T5", sources=2)
