@@ -114,14 +114,27 @@ def run_tick(cadence_class: str, deps: Deps, now: datetime) -> dict:
     run_id = deps.repo.start_run(cadence_class)
 
     collected = []
+    by_source = {}
     for source in (deps.sources or []):
         if source.get("cadence") != cadence_class:
             continue
         if source["method"] == "rss":
-            collected += rss.collect(source, deps.fetcher, now)
+            got = rss.collect(source, deps.fetcher, now)
         elif source["method"] == "doc_diff":
-            collected += doc_diff.collect(source, deps.fetcher, deps.store, now)
+            got = doc_diff.collect(source, deps.fetcher, deps.store, now)
+        else:
+            got = []
+        by_source[source["key"]] = len(got)
+        collected += got
     counters["fetched"] = len(collected)
+
+    # Молчащий источник ничем не отличается от источника, которому нечего
+    # сказать, — а разница принципиальная: шесть лент из девяти, включая
+    # официальные ленты площадок, отдавали ноль неделями, и по общему
+    # счётчику это было незаметно.
+    silent = [key for key, count in by_source.items() if not count]
+    if silent:
+        print(f"[sources] class={cadence_class} молчат: {', '.join(silent)}")
 
     matchers = build_matchers(deps.cfg)
 
@@ -215,8 +228,8 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
     thresholds = deps.cfg.thresholds()
     deps.repo.promote_backlog(now, weights, thresholds)
 
-    urgent = deps.repo.pending_urgent()
-    queued = deps.repo.pending_digest()
+    urgent = deps.repo.pending_cards(card_bands())
+    queued = deps.repo.pending_digest(digest_bands())
     degraded = deps.repo.degraded_sources()
 
     report = build_report({
@@ -299,6 +312,27 @@ def cover_background(hit: dict, fetcher):
 
     print("[cover] фирменная плашка")
     return b"", False
+
+
+# Полосы, по которым редактору уходит готовый пост с кнопками. По умолчанию
+# не только URGENT: порог в 80 баллов набирается почти только за счёт
+# официальной ленты площадки, а пока она отдаёт ноль, карточек нет вовсе.
+# QUEUE по словарю порогов и означает «в работу» — ровно то, что редактору
+# и надо видеть.
+CARD_BANDS = "URGENT,QUEUE"
+BANDS = ("URGENT", "QUEUE", "BACKLOG")
+
+
+def card_bands() -> tuple:
+    raw = os.getenv("CARD_BANDS", CARD_BANDS)
+    chosen = tuple(b.strip().upper() for b in raw.split(",") if b.strip())
+    return tuple(b for b in chosen if b in BANDS) or ("URGENT",)
+
+
+def digest_bands() -> tuple:
+    """Всё, что не пошло карточкой. Пересекаться они не должны: иначе одна
+    находка приходит и постом, и строкой в списке."""
+    return tuple(b for b in BANDS if b not in card_bands())
 
 
 def render_cover(hit: dict, fetcher=None):

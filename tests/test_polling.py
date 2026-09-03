@@ -213,3 +213,32 @@ def test_backoff_survives_the_cycle(monkeypatch):
     monkeypatch.setattr(app, "read_offset", lambda: 0)
     monkeypatch.setattr(app, "get_updates", lambda *a, **k: None)
     assert grown > 1.0
+
+
+# --- какие полосы уходят карточкой ------------------------------------------
+
+def test_queue_is_delivered_as_a_card_by_default(monkeypatch):
+    """Порог в 80 берётся почти только за счёт официальной ленты площадки.
+    Пока она отдаёт ноль, при пороге URGENT карточек нет вовсе."""
+    monkeypatch.delenv("CARD_BANDS", raising=False)
+    assert app.card_bands() == ("URGENT", "QUEUE")
+
+
+def test_digest_never_overlaps_with_cards(monkeypatch):
+    """Иначе одна находка приходит и постом, и строкой в списке,
+    и решение по ней принимается дважды."""
+    for value in ["URGENT", "URGENT,QUEUE", "URGENT,QUEUE,BACKLOG"]:
+        monkeypatch.setenv("CARD_BANDS", value)
+        assert not set(app.card_bands()) & set(app.digest_bands())
+
+
+def test_bands_can_be_narrowed_by_env(monkeypatch):
+    monkeypatch.setenv("CARD_BANDS", "URGENT")
+    assert app.card_bands() == ("URGENT",)
+    assert app.digest_bands() == ("QUEUE", "BACKLOG")
+
+
+def test_broken_env_falls_back_to_urgent(monkeypatch):
+    """Опечатка в переменной не должна отключить доставку совсем."""
+    monkeypatch.setenv("CARD_BANDS", "мусор, ерунда")
+    assert app.card_bands() == ("URGENT",)

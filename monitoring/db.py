@@ -261,11 +261,28 @@ class Repo:
                 (list(decisions), limit))
             return rows_to_dicts(cur)
 
-    def pending_urgent(self) -> list:
-        return self._pending(("URGENT",), 20)
+    def pending_cards(self, bands: tuple = ("URGENT", "QUEUE")) -> list:
+        """Находки, по которым редактору уходит готовый пост с кнопками.
 
-    def pending_digest(self) -> list:
-        return self._pending(("QUEUE", "BACKLOG"), 50)
+        По умолчанию не только URGENT. Порог в 80 баллов берётся почти
+        исключительно за счёт официальной ленты площадки: platform_wb +25,
+        authoritative_source +15, rules_change +20. Пока эти ленты отдают
+        ноль, отраслевые СМИ до 80 не дотягивают, и карточек нет вовсе —
+        при том что QUEUE по словарю порогов и означает «в работу».
+        """
+        return self._pending(tuple(bands), 20)
+
+    def pending_urgent(self) -> list:
+        return self.pending_cards(("URGENT",))
+
+    def pending_digest(self, bands: tuple = ("BACKLOG",)) -> list:
+        """Дайджест — то, что не пошло карточкой.
+
+        Пересекаться с карточками он не должен: иначе одна находка приходит
+        и постом, и строкой в списке, и редактор дважды принимает решение
+        по одному материалу.
+        """
+        return self._pending(tuple(bands), 50)
 
     def mark_delivered(self, hit_ids: list) -> None:
         if not hit_ids:
