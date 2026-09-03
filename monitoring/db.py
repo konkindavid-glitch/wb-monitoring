@@ -393,24 +393,29 @@ class Repo:
             return {row[0]: row[1] for row in cur.fetchall()}
 
     def hits_to_rescore(self, hours: int, limit: int) -> list:
-        """Отброшенные находки, которые стоит пересчитать.
+        """Недооценённые находки, которые стоит пересчитать.
 
         Корпус набирался, пока классификатор был недоступен: без семи
         факторов из четырнадцати потолок — 65 из 160, а со штрафом −50
         за отсутствие подтверждения почти всё уходило в DROP. Эти находки
         не плохи — они не размечены, и заново их не соберёт никто:
         is_known не пустит те же адреса во второй раз.
+
+        Берётся не только DROP. Без факторов-суждений типичная находка
+        набирает около 55 — это BACKLOG, и до QUEUE ей не хватает пяти
+        баллов. Ограничься мы отброшенными, мимо прошли бы как раз те,
+        кому подняться проще всего.
         """
         with self.conn.cursor() as cur:
             cur.execute(
                 """SELECT hit_id, url, url_hash, title, excerpt, source_key,
                           source_tier, platforms, topics, discovered_at,
-                          published_at
+                          published_at, decision
                      FROM monitoring_hits
-                    WHERE decision = 'DROP'
+                    WHERE decision IN ('DROP', 'BACKLOG')
                       AND discovered_at > now() - make_interval(hours => %s)
                       AND handed_off_at IS NULL
-                    ORDER BY discovered_at DESC
+                    ORDER BY score DESC NULLS LAST, discovered_at DESC
                     LIMIT %s""", (hours, limit))
             return rows_to_dicts(cur)
 

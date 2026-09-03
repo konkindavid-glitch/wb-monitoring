@@ -837,7 +837,7 @@ def rescore(deps, limit: int = RESCORE_LIMIT) -> str:
             platform=(row.get("platforms") or ["CROSS_PLATFORM"])[0],
             topics=tuple(row.get("topics") or ()))
         items.append(item)
-        by_hash[item.url_hash] = row["hit_id"]
+        by_hash[item.url_hash] = (row["hit_id"], row.get("decision"))
 
     stats = {}
     judged = judgment_factors(items, client, batch_size=BATCH_SIZE, stats=stats)
@@ -853,15 +853,18 @@ def rescore(deps, limit: int = RESCORE_LIMIT) -> str:
                                        item, items))
         fired.update(judged.get(item.url_hash, {}))
         result = score_item(fired, weights, thresholds)
-        if result.decision == "DROP":
+        hit_id, was = by_hash[item.url_hash]
+        # Полоса не изменилась — записи нет. Лишний переход в журнале
+        # выглядел бы как движение, которого не было.
+        if result.decision == was:
             continue
-        deps.repo.update_score(by_hash[item.url_hash], result,
+        deps.repo.update_score(hit_id, result,
                                "пересчёт с работающим классификатором")
         moved[result.decision] = moved.get(result.decision, 0) + 1
 
     if not moved:
-        return (f"Пересчитано {len(items)}, выше порога не поднялась "
-                f"ни одна. Дело не в разметке — нужны источники.")
+        return (f"Пересчитано {len(items)}, полосу не сменила ни одна. "
+                f"Дело не в разметке — нужны источники.")
     detail = ", ".join(f"{band} {count}" for band, count in sorted(moved.items()))
     return f"Пересчитано {len(items)}, поднялось: {detail}."
 
