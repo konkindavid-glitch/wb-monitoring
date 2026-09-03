@@ -24,6 +24,9 @@ sources:
     cadence: A
     url: "https://seller.wildberries.ru/news"
     signal: doc_change
+    # Проверено 03.09.2026: Одностраничное приложение: отдаёт 200 и 24 КБ разметки, текста 11 знаков.
+    # Данные берутся из /ns/.../api/v1/news, но все такие пути отвечают 401 —
+    # нужна сессия продавца. Публично лента недоступна.
     status: needs_review
 
   - key: src_wb_tariffs
@@ -34,6 +37,7 @@ sources:
     cadence: C
     url: "https://seller.wildberries.ru/tariffs"
     signal: doc_change
+    # Проверено 03.09.2026: То же приложение, что и новости: содержания в разметке нет.
     status: needs_review
 
   - key: src_ozon_seller_news
@@ -45,6 +49,7 @@ sources:
     url: "https://seller.ozon.ru/news"
     signal: doc_change
     # Отдаёт 403 боту. Проверить после деплоя: возможно, дело в IP машины.
+    # Проверено 03.09.2026: 403 Antibot Challenge Page. Защита от роботов, обходу не подлежит.
     status: needs_review
 
   - key: src_ym_partner_news
@@ -98,6 +103,52 @@ sources:
     cadence: B
     url: "https://vc.ru/rss/all"
     status: needs_review
+
+  # --- кандидаты -----------------------------------------------------------
+  # Добавлены 03.09.2026 после того, как выяснилось, что официальные ленты
+  # площадок публично недоступны: WB требует сессию продавца (401), у Ozon
+  # антибот (403). Поток держат отраслевые издания, и их надо больше.
+  #
+  # Проверять их с машины разработки бесполезно — сеть там режет половину
+  # адресов, и рабочий oborot возвращает ноль наравне с мёртвыми. Живые
+  # определит команда /источники прямо в контейнере: молчащий источник
+  # потоку не мешает, а лишний рабочий его усиливает.
+
+  - key: src_e_pepper
+    title: "E-pepper — e-commerce"
+    tier: T3
+    method: rss
+    platform: CROSS_PLATFORM
+    cadence: B
+    url: "https://e-pepper.ru/rss.xml"
+    status: candidate
+
+  - key: src_shopolog
+    title: "Shopolog"
+    tier: T3
+    method: rss
+    platform: CROSS_PLATFORM
+    cadence: B
+    url: "https://www.shopolog.ru/rss/news/"
+    status: candidate
+
+  - key: src_retail_loyalty
+    title: "Retail & Loyalty"
+    tier: T3
+    method: rss
+    platform: CROSS_PLATFORM
+    cadence: B
+    url: "https://retail-loyalty.org/rss/"
+    status: candidate
+
+  - key: src_datainsight
+    title: "Data Insight — исследования e-commerce"
+    tier: T2
+    method: rss
+    platform: CROSS_PLATFORM
+    cadence: D
+    url: "https://datainsight.ru/rss.xml"
+    status: candidate
 
   - key: src_habr_ecommerce
     title: "Habr — электронная коммерция"

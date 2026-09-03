@@ -791,6 +791,16 @@ def handle_message(message: dict, deps) -> None:
         print("[moderation] запрошено состояние")
         return
 
+    if command in SOURCES_COMMANDS:
+        send("Проверяю источники, это займёт до минуты…", deps.token, chat_id)
+        try:
+            report = format_sources(check_sources(deps.cfg, deps.fetcher))
+        except Exception as exc:
+            report = f"Проверка сорвалась: {exc}"
+        send(report, deps.token, chat_id)
+        print("[sources] проверка по запросу")
+        return
+
     if command in RESCORE_COMMANDS:
         send("Пересчитываю, это займёт до минуты…", deps.token, chat_id)
         try:
@@ -909,6 +919,7 @@ BUILD = "2026-09-02 · разборы и рисованные обложки"
 
 STATUS_COMMANDS = {"статус", "status", "диагностика", "ping"}
 RESCORE_COMMANDS = {"пересчёт", "пересчет", "rescore"}
+SOURCES_COMMANDS = {"источники", "sources"}
 
 # Счётчик обработанных нажатий: отличает «кнопку не нажимали» от
 # «нажатие пришло, но результат не дошёл».
@@ -1298,33 +1309,56 @@ def send_test_post(cfg, dry_run: bool = False) -> bool:
     return ok
 
 
-def run_onboarding(cfg) -> list:
-    """Проверяет каждый источник и печатает вердикт.
+def check_sources(cfg, fetcher=None) -> list:
+    """Проверяет каждый источник. Возвращает [(ключ, ok, пояснение)].
 
-    Адреса лент меняются, часть площадок закрывает RSS без предупреждения.
-    Источник, не прошедший проверку, должен быть виден, а не молча отдавать
-    ноль элементов месяцами.
+    Проверять источники с машины разработки бесполезно: сеть здесь режет
+    половину адресов, и рабочий oborot возвращает ноль наравне с мёртвыми.
+    Правду знает только контейнер, поэтому проверка вызывается и командой
+    из чата.
     """
     from monitoring.collectors.base import Fetcher
     from monitoring.collectors.onboarding import validate_source
 
-    fetcher = Fetcher()
+    fetcher = fetcher or Fetcher()
     now = datetime.now(timezone.utc)
     onboarding_cfg = cfg.onboarding_cfg()
-    failed = []
 
-    print(f"{'источник':<24} {'метод':<9} вердикт")
-    print("-" * 78)
+    out = []
     for source in cfg.source_list():
-        report = validate_source(source, fetcher, now, onboarding_cfg)
-        mark = "OK  " if report.ok else "FAIL"
-        detail = report.reason or f"элементов: {report.checks.get('items', '—')}"
-        print(f"{source['key']:<24} {source['method']:<9} {mark}  {detail}")
-        if not report.ok:
-            failed.append(source["key"])
+        try:
+            report = validate_source(source, fetcher, now, onboarding_cfg)
+            detail = report.reason or f"элементов: {report.checks.get('items', '—')}"
+            out.append((source["key"], report.ok, detail))
+        except Exception as exc:
+            out.append((source["key"], False, f"сбой проверки: {exc}"))
+    return out
 
+
+def format_sources(reports: list) -> str:
+    """Отчёт по источникам для чата."""
+    lines = ["🔌 Источники", ""]
+    alive = 0
+    for key, ok, detail in reports:
+        lines.append(f"{'✅' if ok else '⚠️'} {key} — {detail}")
+        alive += bool(ok)
+    lines += ["", f"Живых: {alive} из {len(reports)}."]
+    if alive < len(reports):
+        lines.append("Молчащий источник не даёт находок, но и не мешает: "
+                     "поток держат остальные.")
+    return "\n".join(lines)[:4096]
+
+
+def run_onboarding(cfg) -> list:
+    """Печатает вердикт по каждому источнику. Режим --onboard."""
+    reports = check_sources(cfg)
+    print(f"{'источник':<24} вердикт")
     print("-" * 78)
-    print(f"прошли: {len(cfg.source_list()) - len(failed)} из {len(cfg.source_list())}")
+    for key, ok, detail in reports:
+        print(f"{key:<24} {'OK  ' if ok else 'FAIL'}  {detail}")
+    failed = [key for key, ok, _ in reports if not ok]
+    print("-" * 78)
+    print(f"прошли: {len(reports) - len(failed)} из {len(reports)}")
     if failed:
         print("требуют внимания: " + ", ".join(failed))
     return failed

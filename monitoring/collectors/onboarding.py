@@ -9,6 +9,13 @@ from datetime import datetime
 
 from monitoring.collectors import rss
 
+# Ниже этого на странице нет содержания. Порог нужен из-за одностраничных
+# приложений: seller.wildberries.ru отдаёт 200 и 24 КБ разметки, а текста
+# в ней 11 знаков — одно слово «Wildberries». Проверка «есть хоть какой-то
+# текст» такую страницу пропускала, и источник числился рабочим, месяцами
+# не давая ни одной находки.
+MIN_PAGE_TEXT = 500
+
 
 @dataclass(frozen=True)
 class OnboardingReport:
@@ -23,9 +30,17 @@ def validate_source(source: dict, fetcher, now: datetime, cfg: dict) -> Onboardi
         return OnboardingReport(False, f"источник недоступен: HTTP {result.status}")
 
     if source["method"] != "rss":
-        # doc_diff проверяется иначе: достаточно, чтобы страница отдавала текст.
-        has_text = bool((result.text or "").strip())
-        return OnboardingReport(has_text, "" if has_text else "пустая страница")
+        # doc_diff проверяется по видимому тексту, а не по объёму разметки:
+        # у SPA разметки много, а содержания нет вовсе.
+        from monitoring.collectors.doc_diff import normalize_dom
+
+        text = normalize_dom(result.text or "")
+        if len(text) >= MIN_PAGE_TEXT:
+            return OnboardingReport(True, "", {"text": len(text)})
+        return OnboardingReport(
+            False, f"страница без содержания: {len(text)} знаков текста "
+                   f"при {len(result.text or '')} разметки",
+            {"text": len(text)})
 
     items = rss.collect(source, fetcher, now)
     checks = {"items": len(items)}
