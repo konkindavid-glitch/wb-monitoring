@@ -242,3 +242,63 @@ def test_broken_env_falls_back_to_urgent(monkeypatch):
     """Опечатка в переменной не должна отключить доставку совсем."""
     monkeypatch.setenv("CARD_BANDS", "мусор, ерунда")
     assert app.card_bands() == ("URGENT",)
+
+
+# --- отметка о доставке -----------------------------------------------------
+
+class DeliveryRepo:
+    def __init__(self, pending):
+        self.pending, self.marked = pending, []
+
+    def pending_cards(self, bands):
+        return [h for h in self.pending if h["hit_id"] not in self.marked]
+
+    def pending_digest(self, bands):
+        return []
+
+    def degraded_sources(self):
+        return []
+
+    def save_heartbeat(self, report, run_id=None):
+        pass
+
+    def promote_backlog(self, now, weights, thresholds):
+        return []
+
+    def mark_delivered(self, hit_ids):
+        self.marked += list(hit_ids)
+
+    def rollback(self):
+        pass
+
+
+def test_post_is_marked_delivered_before_the_next_one_is_sent(monkeypatch):
+    """Пачкой отметка терялась при любой ошибке ниже и при перезапуске:
+    пост уже ушёл, но помечен не был, и через минуту уходил заново."""
+    from datetime import datetime, timezone
+
+    marks_when_sent = []
+    repo = DeliveryRepo([
+        {"hit_id": "a", "title": "Первая находка про Wildberries", "score": 70,
+         "decision": "QUEUE", "platforms": ["WILDBERRIES"], "topics": [],
+         "url": "https://x.invalid/a", "factors": {}},
+        {"hit_id": "b", "title": "Совсем другая новость про Ozon", "score": 65,
+         "decision": "QUEUE", "platforms": ["OZON"], "topics": [],
+         "url": "https://x.invalid/b", "factors": {}},
+    ])
+
+    def fake_deliver(hit, deps, is_test=False):
+        marks_when_sent.append(list(repo.marked))
+        return True
+
+    monkeypatch.setattr(app, "deliver_card", fake_deliver)
+    monkeypatch.setattr(app, "build_report", lambda state, now: {})
+
+    from monitoring.config import load_config
+    deps = app.Deps(cfg=load_config(app.ROOT), repo=repo, token="T", chat_id="1")
+    app.run_heartbeat(deps, {"last_run_at": {}, "hits_by_question": {}},
+                      datetime(2026, 9, 3, tzinfo=timezone.utc))
+
+    assert repo.marked == ["a", "b"]
+    # Ко второй отправке первая уже отмечена — значит отметка идёт сразу.
+    assert marks_when_sent[1] == ["a"]

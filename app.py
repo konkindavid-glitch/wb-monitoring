@@ -39,7 +39,8 @@ except Exception:
 from monitoring import stop_rules
 from monitoring.collectors import doc_diff, rss
 from monitoring.config import load_config
-from monitoring.confirmation import count_independent_sources, repeats_of
+from monitoring.confirmation import (count_independent_sources,
+                                     repeats_of, unique_stories)
 from monitoring.enrich import enrich
 from monitoring.delivery import (answer_callback, delete_message,
                                  format_digest, get_updates,
@@ -254,11 +255,25 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
 
     deps.repo.save_heartbeat(report, state.get("run_id"))
 
+    # Один сюжет — один пост. Одно событие освещают несколько изданий,
+    # и пока действовал штраф за неподтверждённость, это было незаметно:
+    # дубликаты лежали в DROP. Теперь они проходят порог разом.
+    urgent, duplicates = unique_stories(urgent)
+    if duplicates:
+        # Отмечаем отданными: сюжет ушёл представителем, и возвращать
+        # его копии каждую минуту незачем.
+        deps.repo.mark_delivered([hit["hit_id"] for hit in duplicates])
+        print(f"[delivery] повторов того же сюжета: {len(duplicates)}")
+
     delivered = []
     failed_sends = 0
     for hit in urgent:
         if deliver_card(hit, deps):
             delivered.append(hit["hit_id"])
+            # Отметка сразу, а не пачкой в конце. Пачкой она терялась при
+            # любой ошибке ниже и при перезапуске контейнера: пост уже ушёл,
+            # но помечен не был, и через минуту heartbeat слал его заново.
+            deps.repo.mark_delivered([hit["hit_id"]])
         else:
             failed_sends += 1
 
@@ -270,6 +285,7 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
     if digest_due and (queued or degraded):
         if deps.sender(format_digest(queued, degraded, report),
                        deps.token, deps.chat_id):
+            deps.repo.mark_delivered([hit["hit_id"] for hit in queued])
             delivered += [hit["hit_id"] for hit in queued]
             state["last_digest_at"] = now
             print(f"[delivery] дайджест отправлен: {len(queued)} материалов, "
@@ -287,7 +303,6 @@ def run_heartbeat(deps: Deps, state: dict, now: datetime) -> dict:
         print("[degraded] Телеграм не принимает сообщения — "
               "проверьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID")
 
-    deps.repo.mark_delivered(delivered)
     return report
 
 

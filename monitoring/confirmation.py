@@ -71,3 +71,39 @@ def repeats_of(item, pool) -> bool:
                and other.source_key == item.source_key
                and same_story(item, other)
                for other in pool)
+
+
+class _View:
+    """Находка из базы в виде, понятном same_story.
+
+    Там ждут .title и .platform, а из базы приходит словарь со списком
+    площадок. Пара строк адаптера дешевле, чем вторая реализация сходства.
+    """
+
+    __slots__ = ("title", "platform")
+
+    def __init__(self, hit):
+        self.title = hit.get("title") or ""
+        platforms = hit.get("platforms") or []
+        self.platform = platforms[0] if platforms else "CROSS_PLATFORM"
+
+
+def unique_stories(hits: list):
+    """(что отдавать, что подавить). Один сюжет — один пост.
+
+    Пока действовал штраф за неподтверждённость, дубликаты были незаметны:
+    одно событие из трёх изданий давало три находки, и все три лежали
+    в DROP. Со снятым штрафом они проходят порог разом, и редактор получает
+    три почти одинаковых поста об одном и том же.
+
+    Представителем остаётся первый в списке. Вызывающий подаёт находки
+    по убыванию баллов, значит остаётся сильнейшая.
+    """
+    kept, duplicates = [], []
+    for hit in hits:
+        view = _View(hit)
+        if any(same_story(view, _View(other)) for other in kept):
+            duplicates.append(hit)
+        else:
+            kept.append(hit)
+    return kept, duplicates

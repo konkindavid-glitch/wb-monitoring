@@ -438,3 +438,47 @@ def test_overlong_post_splits_and_says_why(monkeypatch, capsys):
 
     assert calls == ["sendPhoto", "sendMessage"]
     assert "не влезает" in capsys.readouterr().out
+
+
+# --- почему приходили одинаковые посты --------------------------------------
+
+def hit(hit_id, title, score, platform="WILDBERRIES"):
+    return {"hit_id": hit_id, "title": title, "url": f"https://x.invalid/{hit_id}",
+            "score": score, "decision": "QUEUE", "factors": {},
+            "platforms": [platform], "topics": []}
+
+
+def test_same_story_from_several_outlets_goes_once():
+    """Пока действовал штраф за неподтверждённость, дубликаты лежали в DROP
+    и были незаметны. Со снятым штрафом они проходят порог разом."""
+    from monitoring.confirmation import unique_stories
+
+    kept, duplicates = unique_stories([
+        hit("a", "Wildberries задерживает выплаты продавцам из-за DDoS-атак", 70),
+        hit("b", "Wildberries задерживает выплаты продавцам после DDoS-атак", 60),
+        hit("c", "Ozon меняет тариф хранения с сентября", 55),
+    ])
+
+    assert [h["hit_id"] for h in kept] == ["a", "c"]
+    assert [h["hit_id"] for h in duplicates] == ["b"]
+
+
+def test_strongest_of_the_duplicates_survives():
+    """Вызывающий подаёт находки по убыванию баллов — остаётся сильнейшая."""
+    from monitoring.confirmation import unique_stories
+
+    kept, _ = unique_stories([
+        hit("high", "Wildberries меняет тариф хранения с 3 сентября", 90),
+        hit("low", "Wildberries меняет тариф хранения уже с 3 сентября", 40),
+    ])
+    assert kept[0]["hit_id"] == "high"
+
+
+def test_same_headline_on_different_platforms_is_not_a_duplicate():
+    from monitoring.confirmation import unique_stories
+
+    kept, duplicates = unique_stories([
+        hit("wb", "Меняется тариф хранения с 3 сентября", 70, "WILDBERRIES"),
+        hit("oz", "Меняется тариф хранения с 3 сентября", 70, "OZON"),
+    ])
+    assert len(kept) == 2 and duplicates == []
