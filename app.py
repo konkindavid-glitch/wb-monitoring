@@ -40,6 +40,7 @@ from monitoring import stop_rules
 from monitoring.collectors import doc_diff, rss
 from monitoring.config import load_config
 from monitoring.confirmation import count_independent_sources, repeats_of
+from monitoring.enrich import enrich
 from monitoring.delivery import (answer_callback, delete_message,
                                  format_digest, get_updates,
                                  replace_text, send, send_card)
@@ -163,6 +164,17 @@ def run_tick(cadence_class: str, deps: Deps, now: datetime) -> dict:
             counters["stopped"] += 1
             continue
         survivors.append(item)
+
+    # Дочитываем до разметки: по анонсу из RSS ни один фактор-суждение
+    # не срабатывает, и находка застревает на механических 40 баллах.
+    if survivors and deps.judge is not None:
+        fetch_stats = {}
+        survivors = enrich(survivors, deps.fetcher, stats=fetch_stats)
+        if fetch_stats.get("thin"):
+            print(f"[enrich] дочитано {fetch_stats['fetched']} "
+                  f"из {fetch_stats['thin']} тонких"
+                  + (f", не успели {fetch_stats['skipped']}"
+                     if fetch_stats.get("skipped") else ""))
 
     judged = {}
     stats = {}
@@ -839,6 +851,9 @@ def rescore(deps, limit: int = RESCORE_LIMIT) -> str:
         items.append(item)
         by_hash[item.url_hash] = (row["hit_id"], row.get("decision"))
 
+    fetch_stats = {}
+    items = enrich(items, deps.fetcher, stats=fetch_stats)
+
     stats = {}
     judged = judgment_factors(items, client, batch_size=BATCH_SIZE, stats=stats)
     if stats.get("failed"):
@@ -862,11 +877,12 @@ def rescore(deps, limit: int = RESCORE_LIMIT) -> str:
                                "пересчёт с работающим классификатором")
         moved[result.decision] = moved.get(result.decision, 0) + 1
 
+    read = f" (дочитано {fetch_stats.get('fetched', 0)})"
     if not moved:
-        return (f"Пересчитано {len(items)}, полосу не сменила ни одна. "
+        return (f"Пересчитано {len(items)}{read}, полосу не сменила ни одна. "
                 f"Дело не в разметке — нужны источники.")
     detail = ", ".join(f"{band} {count}" for band, count in sorted(moved.items()))
-    return f"Пересчитано {len(items)}, поднялось: {detail}."
+    return f"Пересчитано {len(items)}{read}, поднялось: {detail}."
 
 
 # --- состояние по запросу ---------------------------------------------------
