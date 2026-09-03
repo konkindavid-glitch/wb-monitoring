@@ -443,11 +443,14 @@ class Repo:
                  json.dumps(result.factors, ensure_ascii=False), result.decision,
                  result.decision, reason, hit_id))
             cur.execute(
+                # transition_id не указывается: колонка bigserial, номер
+                # выдаёт база. Подставленный сюда текстовый идентификатор
+                # ронял весь пересчёт — invalid input syntax for type bigint.
                 """INSERT INTO triage_transitions
-                       (transition_id, hit_id, from_decision, to_decision,
+                       (hit_id, from_decision, to_decision,
                         from_score, to_score, reason)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                (_uid("tr"), hit_id, old_decision, result.decision,
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (hit_id, old_decision, result.decision,
                  old_score, result.score, reason))
         self.conn.commit()
 
